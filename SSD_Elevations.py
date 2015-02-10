@@ -1,12 +1,15 @@
 #!//anaconda/bin/python
-import os, csv, re, datetime, numpy
+import os, csv, re, datetime
 import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+
+pathElevations = '/Users/lizbaumann/Liz/SSD/_Elevations/'
+pathFinances = '/Users/lizbaumann/Liz/SSD/_Finances/'
 
 ################################################################
 # Read in and process Elevations data
 ################################################################
-pathElevations = '/Users/lizbaumann/Liz/SSD/_Elevations/'
-
 def read_elevations(csvfile, acct = 'Checking'):
 	dfename = pd.read_csv(pathElevations + csvfile, skiprows=3)
 	dfename['SourceFile'] = csvfile
@@ -24,12 +27,13 @@ read_elevations('Elevations_Savings_20141231.csv', 'Savings')
 # Preprocessing
 dfe.columns = map(str.strip, dfe.columns)
 dfe.rename(columns={'Amount Credit':'Credit', 'Amount Debit':'Debit'}, inplace=True)
+dfe['Date'] = pd.to_datetime(dfe['Date'], format='%m/%d/%Y')
 dfe[['Debit']] = dfe[['Debit']].astype(float)
 dfe[['Credit']] = dfe[['Credit']].astype(float)
 dfe['Debit'].fillna(0, inplace=True)
 dfe['Credit'].fillna(0, inplace=True)
 def getmonth(dt):
-	return int(datetime.datetime.strptime(dt, '%m/%d/%Y').strftime('%Y%m'))
+	return int(dt.strftime('%Y%m'))
 
 def getnet(series):
 	return series['Debit'] + series['Credit']
@@ -46,7 +50,7 @@ dfe1 = dfe
 # 2011 through 2014, checking + savings: 457 entries, 13 columns
 
 
-def assign_paytypes(s):
+def assign_paytypes_el(s):
 	'''Assign descriptors for every transaction:
 	paytype (deposit, withdrawal), 
 	how (ATM, Check, EFT),
@@ -236,7 +240,8 @@ def assign_paytypes(s):
 			what2 = 'Taxes and Fees'
 		
 		consumables = ['FDX', 'Home Depot', 'ID Enhancements', \
-			'King Soopers', 'Office Max', 'Safeway', 'Target', 'USPS']
+			'King Soopers', 'Office Max', 'Safeway', 'Target', \
+			'Walmart', 'USPS']
 		equipment = ['Aleph Objects', 'McGuckin', 'SparkFun']
 		promotional = ['Meetup', 'StickerGiant', 'Vistaprint'] 
 		otherexp = ['Blackjack Pizza', 'Moes Broadway Bagel', \
@@ -271,12 +276,13 @@ def assign_paytypes(s):
 		'who' : who})
 
 # dfe = dfe1
-dfe_paytypes = dfe.apply(assign_paytypes, axis=1)
+dfe_paytypes = dfe.apply(assign_paytypes_el, axis=1)
 dfe = dfe.join(dfe_paytypes)
 
 ################################################################
 # Split who = 'Rent and Utilities' 
 ################################################################
+# ? try? df.append(s, ignore_index=True)
 
 #dfe[dfe['what'] == 'Rent and Utilities'][sumvars].groupby(dfe['Description']).sum()
 #dfe[dfe['what'] == 'Rent and Utilities'][sumvars].groupby(dfe['Date']).sum()
@@ -314,53 +320,149 @@ dfe = pd.concat([dfe_not_ru, dfe_rent, dfe_util])
 
 
 ################################################################
+# Split who = 'Dues and Donations'... 127 entries of this, 70 splittable
+# first need to reconcile totals, then if matches, substitute detail
+#dfe_dd['Date'] = pd.to_datetime(dfe_dd['Date'], format='%m/%d/%Y')
+################################################################
+# preprocessing: add fields needed for Paypal merging
+dfe['Attendees'] = 0
+dfe['Workshop_Disc'] = 0	
+dfe['Dues_Rate'] = 0
+dfe['Mbrs'] = 0	
+dfe['Mbrs_Reg'] = 0	
+dfe['Mbrs_SS'] = 0	
+dfe['Mbrs_Fam'] = 0	
+dfe['Mbrs_UNK'] = 0	
+
+dfe_dd = dfe[dfe['who'] == 'Dues and Donations'] # 127
+dfe_nodd = dfe[dfe['who'] != 'Dues and Donations'] # 355
+dfe_dd_bydt = dfe_dd['Net'].groupby(dfe_dd['Date']).sum()
+
 # Read in and process Revenue Detail from spreadsheet
 # this will have cash/check dues and donations
-################################################################
-pathFinances = '/Users/lizbaumann/Liz/SSD/_Finances/'
-df_revdtl = pd.read_csv(pathFinances + 'RevenueDetail.csv', skiprows=8)
-
+df_revdtl = pd.read_csv(pathFinances + 'RevenueDetail.csv',skiprows=8)
 df_revdtl['Amount'] = df_revdtl['Amount'].str.replace(r'$', '')
 df_revdtl['Amount'] = df_revdtl['Amount'].str.replace(r',', '').astype(float)
 df_revdtl.rename(columns={'yrmo':'Month'}, inplace=True)
+df_revdtl['Date'] = pd.to_datetime(df_revdtl['Date'], format='%m/%d/%Y')
 
-# for checking
-df_revdtl['Amount'].groupby(df_revdtl['Category']).sum()
-df_revdtl['Amount'].groupby(df_revdtl['Payhow']).sum()
+# get only Elevations data
+df501c3box = df_revdtl[df_revdtl['Payhow'] == '501c3box']
+dfdd = df_revdtl[df_revdtl['Payhow'].isin(['cash','check'])]
+dfdd = dfdd[dfdd['Category'] != 'Flotations']
+#dfdd = dfdd[dfdd['Category'].isin(['Classes','Dues','Donations','Other Revenue','501c3 Fund','Flotations','UNKNOWN'])]
 
-# get only bank data
-df_dddtl = df_revdtl[df_revdtl['Payhow'].isin(['cash','check','501c3box'])]
-df_dddtl = df_dddtl[df_dddtl['Category'].isin(['Dues','Donations'])]
+# summarize by month, merge to Elevations data and reconcile
+dfdd_bydt = dfdd['Amount'].groupby(dfdd['Date']).sum()
+dd_compare = pd.merge(
+	dfdd_bydt.reset_index(), 
+	dfe_dd_bydt.reset_index(), 
+	how='outer', on='Date', sort = 'TRUE')
 
-dddtl_byyrmo = df_dddtl['Amount'].groupby(df_dddtl['Month']).sum()
-# how to merge this series to the Elevations data and compare?
-# Month and has no name
-dddtl_byyrmo.index.names(['Month','Amount'])
+dd_compare.columns = ['Date','Spreadsheet','Elevations']
+dd_compare.fillna(0, inplace=True)
+dd_compare['Diff'] = dd_compare['Spreadsheet'] - dd_compare['Elevations']
+#dd_compare[(dd_compare['Diff'] != 0) & (dd_compare['Date'] > '12-31-2012')]
 
-pd.merge(duesdtl, donsdtl, on='Date')
-duesdtl = duesdtl.join(clsdtl, on='Date')
+# next, for dates that matched and 0 diff, substitute detail rev data
+# get subset to substitute: get list of dates, then subset on it
+dd_subs_datelist = list(dd_compare[(dd_compare['Diff'] == 0) & \
+	(dd_compare['Elevations'] != 0) & \
+	(dd_compare['Date'] > '12-31-2012') & \
+	(dd_compare['Date'] < '01-01-2015')]['Date'])
+
+dfe_nosubs = dfe_dd[~dfe_dd['Date'].isin(dd_subs_datelist)] # 57
+dfe_subs1 = dfe_dd[dfe_dd['Date'].isin(dd_subs_datelist)] # 70
+dfe_subs1['Credit'].sum() # 7642.81
+
+# reduce so there is only one row per date, before merging to detail by date
+dfekeep = ['Date', 'Account', 'Month', 'Entries', 'Paytype', 'how']
+dfe_subs2 = dfe_subs1[dfekeep].drop_duplicates() # 36
+dfddkeep = ['Date', 'Category', 'Amount', 'From', 'Payhow', 'For Date', 'Qty']
+
+dfe_subs3 = pd.merge(dfe_subs2, dfdd[dfddkeep], on='Date', suffixes = ('', '_y')) # 178
+
+dfe_subs3['SourceFile'] = 'Rev Detail'
+dfe_subs3['Credit'] = dfe_subs3['Amount']
+dfe_subs3['Paytype'] = dfe_subs3['Category']
+dfe_subs3['what'] = dfe_subs3['Category']
+dfe_subs3['who'] = dfe_subs3['From']
+
+# Paytype = Dues Monthly, Workshop, Donation, 501c3 Fund (Other Revenue?)
+def assign_dddtl(s):
+	''' Assign dues / donations detail fields. Note set it up
+	so that payments for multiple months are in separate rows.'''
+	Attendees = 0
+	Dues_Rate = 0
+	Mbrs = 0
+	Mbrs_Reg = 0
+	Mbrs_SS = 0
+	Mbrs_Fam = 0
+	Mbrs_UNK = 0
+	Workshop_Disc = 0
+	
+	if s['Category'] == 'Workshop':
+		Attendees = max(1,s['Qty'])
+	
+	if s['Category'] == 'Dues Monthly':
+		Dues_Rate = s['Amount'] # enough??
+		Mbrs = 1
+		if (s['Amount'] == 12.5) | \
+			(s['Amount'] == 25) | \
+			(s['Amount'] == 40):
+			Mbrs_SS = 1
+		if (s['Amount'] == 37.5) | \
+			(s['Amount'] == 75):
+			Mbrs_Reg = 1
+		if (s['Amount'] == 50) | \
+			(s['Amount'] == 100):
+			Mbrs_Fam = 1
+		else:
+			Mbrs_UNK = 1
+		if (s['Amount'] == 12.5) | \
+			(s['Amount'] == 37.5) | \
+			(s['Amount'] == 50):
+			Workshop_Disc = 1
+			Mbrs = Mbrs * .5
+			Mbrs_Reg = Mbrs_Reg * .5
+			Mbrs_SS = Mbrs_SS * .5
+			Mbrs_Fam = Mbrs_Fam * .5
+			Mbrs_UNK = Mbrs_UNK * .5
+	
+	return pd.Series({
+		'Attendees' : Attendees, 
+		'Workshop_Disc' : Workshop_Disc,
+		'Dues_Rate': Dues_Rate,
+		'Mbrs' : Mbrs,
+		'Mbrs_Reg' : Mbrs_Reg,
+		'Mbrs_SS' : Mbrs_SS,
+		'Mbrs_Fam' : Mbrs_Fam,
+		'Mbrs_UNK' : Mbrs_UNK})
+
+
+dfe_subs3b = dfe_subs3.apply(assign_dddtl, axis=1)
+dfe_subs4 = dfe_subs3.join(dfe_subs3b)
+dfe_subs4['Debit'] = 0
+dfe_subs4['Net'] = dfe_subs4.apply(getnet, axis=1)
+
+
+#dfe_subs4['Credit'].sum() # 7642.81
+
+
+
+# dfe['Credit'].sum() # 86035.18
+dfe9 = pd.concat([dfe_nodd, dfe_nosubs, dfe_subs4])
+# dfe9['Credit'].sum() # 86035.18
+
 
 ################################################################
-# Split who = 'Dues and Donations'... 108 entries of this
-# first need to reconcile totals, then if matches, merge
+# Next: 
 ################################################################
-dfe_dd = dfe[dfe['who'] == 'Dues and Donations']
-dfe_dd[['Date','Description','Credit','Debit']]
-dfe_dd[['Date','Memo','Credit','Debit']]
-
-dfe_dep_byyrmo = dfe_dep['Net'].groupby(dfe_dep['Month']).sum()
-pd.concat([dddtl_byyrmo, dfe_dep_byyrmo])
+# include square payment detail
+# dues month in subs4 should be from the 'For Date' field!?!?
+# remove all other columns? dfe_dd.columns
 
 
-dfe_dep[sumvars].groupby(dfe_dep['Month']).sum()
-
-# Need process (a form really) for recording itemization of deposits:
-# date
-# what: dues, donations, workshop fees
-# from who
-# what2, if dues: what month(s) for dues (dues rate, # months, which months?, discount applied?)
-# what2, if donation: detail e.g. beverage money or donation
-# what2, if workshop: when, who was teacher, quantity (how many fees being paid)
 
 ################################################################
 # Summaries (note, by Name may not print them all...)
@@ -392,7 +494,7 @@ dfex[sumvars].groupby(dfex['Month']).sum()
 dfex = dfe[dfe['what'] == 'Utilities']
 dfex[sumvars].groupby(dfex['Month']).sum()
 
-
+# early on: 
 # 248 how = UNKNOWN
 # 51 what = UNKNOWN
 # 51 who = UNKNOWN
@@ -403,39 +505,25 @@ dfex[sumvars].groupby(dfex['Month']).sum()
 # To do
 ################################################################
 # Elevations:
-# Deposits itemized: who = 'Dues and Donations'
 # Square all going to dues right now, but some are not dues
 # make it give 12/31 views - note will not always have a 12/31 entry...
+# month = for month? esp double pays etc.
 
 # Everything:
-# upload donations from spreadsheet?
 # upload RFID info from system and from spreadsheet (for Old RFID info)
 # joel and liz and others (rob, jennifer) - itemize reimbursements as dues
 # workshop discounts, and other dues credits, how to do better
 # build recon with spreadsheet
 
-UNKNOWNs
-           Date                    Description   Credit    Debit
-# these may be regular bank or ATM deposits, probably for dues/donations
-14   11/30/2011                        Deposit   100.00     0.00
-15   11/29/2011                        Deposit   430.00     0.00
-29   11/30/2012                        Deposit   115.00     0.00
-83   07/17/2012                        Deposit   113.00     0.00
-103  05/31/2012                        Deposit   195.00     0.00
-107  05/10/2012                        Deposit    20.00     0.00
-108  05/10/2012                        Deposit   500.00     0.00
-110  05/09/2012                        Deposit   100.00     0.00
-111  05/09/2012                        Deposit   300.00     0.00
-129  03/02/2012                        Deposit     2.00     0.00
-130  03/02/2012                        Deposit   100.00     0.00
-131  03/01/2012                        Deposit   525.00     0.00
-136  02/09/2012                        Deposit   223.00     0.00
-139  02/01/2012                        Deposit   500.00     0.00
-140  02/01/2012                        Deposit   100.00     0.00
-141  02/01/2012                        Deposit   150.00     0.00
-142  02/01/2012                        Deposit   161.00     0.00
-257  04/30/2013                        Deposit   216.00     0.00
-289  02/01/2013                        Deposit   159.00     0.00
+# Need process (a form really) for recording itemization of deposits:
+# date
+# what: dues, donations, workshop fees
+# from who
+# what2, if dues: what month(s) for dues (dues rate, # months, which months?, discount applied?)
+# what2, if donation: detail e.g. beverage money or donation
+# what2, if workshop: when, who was teacher, quantity (how many fees being paid)
+# special for 501c3
+
 
 # do NOT know what this is - ask other admins?:
 326  10/07/2014                     Withdrawal     0.00  -100.00
@@ -453,5 +541,3 @@ UNKNOWNs
 ################################################################
 # NOTES - treatment of special situations above
 ################################################################
-
-# join, merge, concat

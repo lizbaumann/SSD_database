@@ -1,12 +1,14 @@
 #!//anaconda/bin/python
-import os, csv, re, datetime, numpy
+import os, csv, re, datetime
 import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+
+pathPaypal = '/Users/lizbaumann/Liz/SSD/_Paypal/'
 
 ################################################################
 # Read in and process Paypal data
 ################################################################
-pathPaypal = '/Users/lizbaumann/Liz/SSD/_Paypal/'
-
 dfp = pd.DataFrame()
 
 def read_paypal(csvfile):
@@ -188,6 +190,7 @@ dfp2[['Item Title','Gross','Dues_Rate']]
 # CONSIDER FOR CHANGES: 
 # review Joel and Liz adjustments, do by month
 # monthly dues: if paying > 1 month: create multiple records from 1 record?
+# also need the 'for' month, not the payment month?
 # modeling question: 'Mbrs_Reg','Mbrs_SS','Mbrs_Fam' fields or rows?
 
 # PROBLEMS:
