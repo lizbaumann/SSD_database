@@ -27,22 +27,33 @@ read_paypal('Paypal_2014_new.csv')
 
 # Preprocessing
 dfp.columns = map(str.strip, dfp.columns)
-def getmonth(dt):
-	return int(datetime.datetime.strptime(dt, '%m/%d/%Y').strftime('%Y%m'))
-
-dfp['Month'] = dfp['Date'].apply(getmonth)
 dfp['Entries'] = 1
+dfp['Account'] = 'Paypal'
 dfp[['Item Title']] = dfp[['Item Title']].astype(str)
 dfp[['Option 1 Name']] = dfp[['Option 1 Name']].astype(str)
 dfp[['Option 1 Value']] = dfp[['Option 1 Value']].astype(str)
-dfp = dfp[dfp['Type'] != 'Update to eCheck Sent']
-dfp = dfp[dfp['Type'] != 'Update to eCheck Received']
-dfp = dfp[dfp['Type'] != 'Payment Review']
-dfp = dfp[dfp['Type'] != 'Cancelled Fee']
-dfp = dfp[dfp['Type'] != 'PayPal card confirmation refund']
+
+dfp = dfp[~dfp['Type'].isin(['Update to eCheck Sent', \
+	'Update to eCheck Received', 'Payment Review', 
+	'Cancelled Fee', 'PayPal card confirmation refund']
+
+# dfp = dfp[dfp['Type'] != 'Update to eCheck Sent']
+# dfp = dfp[dfp['Type'] != 'Update to eCheck Received']
+# dfp = dfp[dfp['Type'] != 'Payment Review']
+# dfp = dfp[dfp['Type'] != 'Cancelled Fee']
+# dfp = dfp[dfp['Type'] != 'PayPal card confirmation refund']
+
 dfp[['Fee']] = dfp[['Fee']].astype(float)
+dfp['Date'] = pd.to_datetime(dfp['Date'], format='%m/%d/%Y')
+dfp['Month'] = dfp['Date'].apply(lambda dt: int(dt.strftime('%Y%m')))
+dfp['Year'] = dfp['Date'].apply(lambda dt: int(dt.strftime('%Y')))
+dfp['For Month'] = dfp['Month']
+dfp['how'] = 'EFT'
+dfp['what2'] = 'na'
 dfp1 = dfp
 
+# need to assign how, who, what, what2
+what: Dividend, Dues, Expenses, Fee Monthly, Fee Other, Insurance, Internet, Mill, Reimburse Kreizel Deposit, Rent, Taxes and Fees, Transfer, Trash, Utilities, UNKNOWN... Workshop, Donation, Dues Monthly, 501c3 Fund, Other Revenue
 
 
 # Assign paytype (dues vs workshops etc), member count fields
@@ -93,7 +104,8 @@ def assign_members(s):
 		else: 
 			mbrs = 1.0
 	
-		if (s['Gross'] == 12.5) | (s['Gross'] == 32.5) | \
+		if (s['Gross'] == 12.5) | \
+			(s['Gross'] == 32.5) | \
 			((s['Gross'] == 50) & (mbrs == 1)):
 			# workshops handled by either charging half or by refund
 			workshopdisc = 1
@@ -119,7 +131,8 @@ def assign_members(s):
 			# Feb prorated becomes this
 			duesrate = 65
 		
-		if (duesrate == 65) | (duesrate == 75) | \
+		if (duesrate == 65) | \
+			(duesrate == 75) | \
 			('Regular' in s['Option 1 Value']):
 			mbrs_reg = mbrs
 		elif (duesrate == 25) | ('Student' in s['Option 1 Value']):
@@ -153,6 +166,28 @@ dfp['Paytype'] = dfp.apply(assign_paytype, axis=1)
 dfp_mbrs = dfp.apply(assign_members, axis=1)
 dfp = dfp.join(dfp_mbrs)
 
+dfp.rename(columns={'Gross' : 'Amount', \
+	'Name' : 'who', \
+	'Time' : 'PP_Time', \
+	'Type' : 'PP_Type', \
+	'Status' : 'PP_Status', \
+	'Item Title' : 'PP_Item Title', \
+	'Option 1 Value' : 'PP_Option 1', \
+	'Option 2 Value' : 'PP_Option 2', \
+	'From Email Address' : 'PP_From Email'
+	}, inplace=True)
+
+dfpkeep = ['Date', 'Year', 'Month', 'For Month', \
+	'Account', 'SourceFile', 'Transaction ID', \
+	'Paytype', 'how', 'who', 'what', 'what2', 
+	'Amount', 'Balance', 'Entries', \
+	'Attendees', 'Workshop_Disc', 'Dues_Rate', \
+	'Mbrs', 'Mbrs_Reg', 'Mbrs_SS', 'Mbrs_Fam', 'Mbrs_UNK', \
+	'PP_Time', 'PP_Type', 'PP_Status', 'PP_Item Title', \
+	'PP_Option 1', 'PP_Option 2', 'PP_From Email']
+dfp = dfp[dfpkeep]
+
+dfp.to_csv('dfp.csv')
 
 ################################################################
 # Summaries (note, by Name may not print them all...)
@@ -169,6 +204,7 @@ dfp[mbrvars].groupby(dfp['Dues_Rate']).sum()
 dfp2 = dfp[dfp['Paytype'] != 'Transfer']
 dfp2[sumvars].groupby(dfp2['Month']).sum()
 dfp2[mbrvars].groupby(dfp2['Month']).sum()
+
 
 ################################################################
 # Use for troubleshooting
@@ -191,7 +227,7 @@ dfp2[['Item Title','Gross','Dues_Rate']]
 # review Joel and Liz adjustments, do by month
 # monthly dues: if paying > 1 month: create multiple records from 1 record?
 # also need the 'for' month, not the payment month?
-# modeling question: 'Mbrs_Reg','Mbrs_SS','Mbrs_Fam' fields or rows?
+# have mbr_type instead of tiers in columns?
 
 # PROBLEMS:
 # where is mill money (2012?)

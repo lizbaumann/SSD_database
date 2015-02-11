@@ -7,6 +7,8 @@ import matplotlib.pyplot as plt
 pathElevations = '/Users/lizbaumann/Liz/SSD/_Elevations/'
 pathFinances = '/Users/lizbaumann/Liz/SSD/_Finances/'
 
+# debits always negative, credits always positive
+
 ################################################################
 # Read in and process Elevations data
 ################################################################
@@ -26,218 +28,208 @@ read_elevations('Elevations_Savings_20141231.csv', 'Savings')
 
 # Preprocessing
 dfe.columns = map(str.strip, dfe.columns)
-dfe.rename(columns={'Amount Credit':'Credit', 'Amount Debit':'Debit'}, inplace=True)
+dfe.rename(columns={ \
+	'Transaction Number' : 'Transaction ID', \
+	'Description' : 'El_Description', \
+	'Memo' : 'El_Memo', \
+	'Check Number' : 'El_Check Number'
+	}, inplace=True)
+
+dfe[['El_Description']] = dfe[['El_Description']].astype(str)
+dfe[['El_Memo']] = dfe[['El_Memo']].astype(str)
+dfe[['Amount Debit']] = dfe[['Amount Debit']].astype(float)
+dfe['Amount Debit'].fillna(0, inplace=True)
+dfe[['Amount Credit']] = dfe[['Amount Credit']].astype(float)
+dfe['Amount Credit'].fillna(0, inplace=True)
+dfe['Amount'] = dfe['Amount Debit'] + dfe['Amount Credit']
 dfe['Date'] = pd.to_datetime(dfe['Date'], format='%m/%d/%Y')
-dfe[['Debit']] = dfe[['Debit']].astype(float)
-dfe[['Credit']] = dfe[['Credit']].astype(float)
-dfe['Debit'].fillna(0, inplace=True)
-dfe['Credit'].fillna(0, inplace=True)
-def getmonth(dt):
-	return int(dt.strftime('%Y%m'))
-
-def getnet(series):
-	return series['Debit'] + series['Credit']
-
-dfe['Net'] = dfe.apply(getnet, axis=1)
-dfe[['Net']] = dfe[['Net']].astype(float)
-dfe['Net'].fillna(0, inplace=True)
-dfe['Month'] = dfe['Date'].apply(getmonth)
+dfe['Month'] = dfe['Date'].apply(lambda dt: int(dt.strftime('%Y%m')))
+dfe['Year'] = dfe['Date'].apply(lambda dt: int(dt.strftime('%Y')))
+dfe['For Month'] = dfe['Month']
 dfe['Entries'] = 1
-dfe[['Description']] = dfe[['Description']].astype(str)
-dfe[['Memo']] = dfe[['Memo']].astype(str)
 dfe1 = dfe
 
 # 2011 through 2014, checking + savings: 457 entries, 13 columns
 
-
-def assign_paytypes_el(s):
+def assign_cats_el(s):
 	'''Assign descriptors for every transaction:
-	paytype (deposit, withdrawal), 
-	how (ATM, Check, EFT),
-	what (rent, utilities, dues and donations, expenses, etc.), 
-	what2,
-	who (Paypal, Square, etc.)'''
+	how (ATM, Check, EFT)
+	who (Paypal, Square, member, vendor, etc.)
+	what1 (revenue, expense, other) 
+	what2 (dues, donations, dividends, workshops, 501c3 Fund, other revenue,
+		rent and utilities, taxes insurance and fees, 
+		special expense, other expense, 
+		transfers)
+	what3 (dues type: monthly, recurring, other; 
+		expense type: rent, utilities, internet, trash, 
+		taxes, licenses, fees monthly, fees other,
+		(special expense detail),  
+		consumables, equipment, promotional, other expense)'''
 	
-	paytype = 'UNKNOWN'
 	how = 'UNKNOWN'
-	what = 'UNKNOWN'
-	what2 = 'na'
 	who = 'UNKNOWN'
-	
-	########## Assign paytype = Deposit or Withdrawal ##########
-	if 'DEPOSIT' in s['Description'].upper():
-		paytype = 'Deposit'
-	elif 'WITHDRAWAL' in s['Description'].upper():
-		paytype = 'Withdrawal'
-	elif s['Debit'] < 0:
-		paytype = 'Withdrawal'
-	elif s['Credit'] > 0:
-		paytype = 'Deposit'
+	what1 = 'UNKNOWN'
+	what2 = 'UNKNOWN'
+	what3 = 'na'
 	
 	########## Assign simple how = EFT, ATM, Check ##########
-	if ('WITHDRAWAL BILL PAYMENT' in s['Description'].upper()) | \
-		('WITHDRAWAL WESTERN' in s['Description'].upper()) | \
-		('WITHDRAWAL KREIZEL' in s['Description'].upper()) | \
-		(' FEE' in s['Description'].upper()):
+	if ('WITHDRAWAL BILL PAYMENT' in s['El_Description'].upper()) | \
+		('WITHDRAWAL WESTERN' in s['El_Description'].upper()) | \
+		('WITHDRAWAL KREIZEL' in s['El_Description'].upper()) | \
+		(' FEE' in s['El_Description'].upper()):
 		how =  'EFT'
-	elif 'ATM' in s['Description'].upper():
+	elif 'ATM' in s['El_Description'].upper():
 		how = 'ATM'
-	elif ('BY CHECK' in s['Description'].upper()) | \
-		(('DRAFT' in s['Description'].upper()) & (s['Debit'] < 0)):
-		how = 'Check'
-	# else: how = 'Debit' # ??????????????
+	elif ('BY CHECK' in s['El_Description'].upper()) | \
+		(('DRAFT' in s['El_Description'].upper()) & (s['Amount'] < 0)):
+		how = 'check'
 		
 	########## Dues, Donations, Dividends, some Fees ##########
-	if ('SQUARE' in s['Memo'].upper()) | \
-		('SQC' in s['Memo'].upper()) | \
-		('SQUARE' in s['Description'].upper()):
+	if ('SQUARE' in s['El_Memo'].upper()) | \
+		('SQC' in s['El_Memo'].upper()) | \
+		('SQUARE' in s['El_Description'].upper()):
 		how = 'EFT'
 		who = 'Square'
-		if paytype == 'Deposit':
-			what = 'Dues'
+		if s['Amount'] > 0:
+			what3 = 'Dues Monthly'
 		else:
-			what = 'Fee Other'
-	elif ('PAYPAL' in s['Memo'].upper()) | \
-		('PAYPAL' in s['Description'].upper()):
+			what3 = 'Fees Other'
+	elif ('PAYPAL' in s['El_Memo'].upper()) | \
+		('PAYPAL' in s['El_Description'].upper()):
 		how = 'EFT'
 		who = 'Paypal'
-		if paytype == 'Deposit':
-			what = 'Dues'
+		if s['Amount'] > 0:
+			what3 = 'Dues Other'
 		else:
-			what = 'Fee Monthly'
-	elif ('PP' in s['Memo'].upper()) & \
-		(s['Description'] == 'Withdrawal'):
+			what3 = 'Fees Monthly'
+	elif ('PP' in s['El_Memo'].upper()) & \
+		(s['El_Description'] == 'Withdrawal'):
 		how = 'EFT'
 		who = 'Paypal'
-		what = 'Fee Other'
-	elif 'DEPOSIT ADJUSTMENT' in s['Description'].upper():
+		what3 = 'Fees Other'
+	elif 'DEPOSIT ADJUSTMENT' in s['El_Description'].upper():
 		how = 'ATM' # eg deposit said 75 but check was for 70
-		what = 'Dues'
-		who = 'Dues Deposit Adjustment'
-	elif 'HOME BANKING' in s['Description'].upper():
+		who = 'Geoffrey Terrell'
+		what3 = 'Dues Other'
+	elif 'HOME BANKING' in s['El_Description'].upper():
 		how =  'EFT'
-		what = 'Transfer'
 		who = 'Self'
-	elif 'DIVIDEND' in s['Description'].upper():
+		what2 = 'Transfers'
+	elif 'DIVIDEND' in s['El_Description'].upper():
 		how =  'EFT'
-		what = 'Dividend'
 		who = 'Elevations'
-	elif 'DEPOSIT' in s['Description'].upper():
-		who = 'Dues and Donations'
-		what = 'Dues and Donations'
+		what2 = 'Dividends'
+	elif 'DEPOSIT' in s['El_Description'].upper():
+		what2 = 'Dues and Donations'
 	
 	########## Fees ##########
-	elif s['Description'] == 'Business Fee':
+	elif s['El_Description'] == 'Business Fee':
 		how = 'EFT'
 		who = 'Elevations'
-		what = 'Fee Monthly'
-	elif (s['Description'] == 'Courtesy Pay Fee') | \
-		('ITEM FEE STALE DATE' in s['Memo'].upper()):
+		what3 = 'Fees Monthly'
+	elif (s['El_Description'] == 'Courtesy Pay Fee') | \
+		('ITEM FEE STALE DATE' in s['El_Memo'].upper()):
 		# Courtesy pay fee for? not sure why
 		how =  'EFT'
 		who = 'Elevations'
-		what = 'Fee Other'
+		what3 = 'Fees Other'
 	
 	########## Rent and Utilities ##########
-	elif (s['Description'] == 'Withdrawal by Check') & \
+	elif (s['El_Description'] == 'Withdrawal by Check') & \
 		(s['Month'] >= 201202) & (s['Month'] <= 201204):
 		who = 'Westland'
-		what = 'Rent'
-	elif ('Draft' in s['Description']) & (s['Month'] <= 201303) & \
-		(s['Debit'] == -1250):
+		what3 = 'Rent'
+	elif ('Draft' in s['El_Description']) & (s['Month'] <= 201303) & \
+		(s['Amount'] == -1250):
 		who = 'Westland'
-		what = 'Rent'
-	elif (s['Description'] == 'Draft 000127') | \
-		(s['Description'] == 'Draft 000157') | \
-		(s['Description'] == 'Draft 000158') | \
-		(s['Description'] == 'Draft 000159') | \
-		(s['Description'] == 'Draft 000177') | \
-		(s['Description'] == 'Draft 000179'):
+		what3 = 'Rent'
+	elif (s['El_Description'] == 'Draft 000127') | \
+		(s['El_Description'] == 'Draft 000157') | \
+		(s['El_Description'] == 'Draft 000158') | \
+		(s['El_Description'] == 'Draft 000159') | \
+		(s['El_Description'] == 'Draft 000177') | \
+		(s['El_Description'] == 'Draft 000179'):
 		who = 'Westland'
-		what = 'Utilities'
-	elif (s['Description'] == 'Draft 000151') | \
-		(s['Description'] == 'Draft 000180') | \
-		(s['Description'] == 'Draft 000181') | \
-		(s['Description'] == 'Draft 000182') | \
-		(s['Description'] == 'Draft 000183'):
+		what3 = 'Utilities'
+	elif (s['El_Description'] == 'Draft 000151') | \
+		(s['El_Description'] == 'Draft 000180') | \
+		(s['El_Description'] == 'Draft 000181') | \
+		(s['El_Description'] == 'Draft 000182') | \
+		(s['El_Description'] == 'Draft 000183'):
 		who = 'Westland'
-		what = 'Rent and Utilities'
+		what3 = 'Rent and Utilities'
 	
-	elif (s['Description'] == 'Draft 000184') | \
-		((s['Date'] == '04/03/2014') & (s['Debit'] == -61.46)):
+	elif (s['El_Description'] == 'Draft 000184') | \
+		((s['Date'] == '04/03/2014') & (s['Amount'] == -61.46)):
 		who = 'Kreizel'
-		what = 'Rent'
-	elif (s['Description'] == 'Draft 000227') | \
-		(('KREIZEL' in s['Description'].upper()) & (s['Month'] == 201406)):
+		what3 = 'Rent'
+	elif (s['El_Description'] == 'Draft 000227') | \
+		(('KREIZEL' in s['El_Description'].upper()) & (s['Month'] == 201406)):
 		who = 'Kreizel'
-		what = 'Utilities'
-	elif (s['Description'] == 'Draft 000226') | \
-		(s['Description'] == 'Draft 000228') | \
-		(s['Description'] == 'Draft 000229') | \
-		(s['Description'] == 'Draft 000231') | \
-		('KREIZEL' in s['Description'].upper()) | \
-		('KREIZEL' in s['Memo'].upper()):
+		what3 = 'Utilities'
+	elif (s['El_Description'] == 'Draft 000226') | \
+		(s['El_Description'] == 'Draft 000228') | \
+		(s['El_Description'] == 'Draft 000229') | \
+		(s['El_Description'] == 'Draft 000231') | \
+		('KREIZEL' in s['El_Description'].upper()) | \
+		('KREIZEL' in s['El_Memo'].upper()):
 		who = 'Kreizel'
-		what = 'Rent and Utilities'
+		what3 = 'Rent and Utilities'
 	
 	########## Internet, Trash ##########
-	elif ('LIVE WIRE' in s['Memo'].upper()) | \
-		('LIVE WIRE' in s['Description'].upper()) | \
-		(s['Description'] == 'Draft 000101'):
+	elif ('LIVE WIRE' in s['El_Memo'].upper()) | \
+		('LIVE WIRE' in s['El_Description'].upper()) | \
+		(s['El_Description'] == 'Draft 000101'):
 		who = 'Live Wire'
-		what = 'Internet'
-	elif 'WESTERN DISPOSAL' in s['Description'].upper():
+		what3 = 'Internet'
+	elif 'WESTERN DISPOSAL' in s['El_Description'].upper():
 		who = 'Western Disposal'
-		what = 'Trash'
+		what3 = 'Trash'
 	
 	########## Special Items ##########
-	elif s['Description'] == 'Draft 000152':
+	elif s['El_Description'] == 'Draft 000152':
 		who = 'Mill'
-		what = 'Mill'
-	elif s['Description'] == 'Draft 000202':
+		what2 = 'Special Expense'
+		what3 = 'Mill'
+	elif s['El_Description'] == 'Draft 000202':
 		who = 'John English'
-		what = 'Reimburse Kreizel Deposit'	
+		what2 = 'Special Expense'
+		what3 = 'Reimburse Kreizel Deposit'	
 	
 	########## Misc Expenses ##########
 	# what2 categories: Consumables, Equipment, Insurance, 
-	# Promotional, Taxes and Fees, Other
-	elif s['Description'] == 'Draft 000206':
+	# Promotional, Taxes, Fees, Other
+	elif s['El_Description'] == 'Draft 000206':
 		# 4/4/14 Jim Turpin for shelf materials, paid by Liz
 		who = 'Reimburse Member'
-		what = 'Expenses'	
-		what2 = 'Equipment'	
-	elif s['Description'] == 'Draft 000233':
+		what3 = 'Equipment'	
+	elif s['El_Description'] == 'Draft 000233':
 		# 4/8/14 Loveland Mini Maker Faire exhibit dues, paid by Joel
 		who = 'Making Progress'
-		what = 'Expenses'	
-		what2 = 'Promotional'	
-	elif (s['Description'] == 'Draft 000207') | \
-		(s['Description'] == 'Draft 000205'):
+		what3 = 'Promotional'	
+	elif (s['El_Description'] == 'Draft 000207') | \
+		(s['El_Description'] == 'Draft 000205'):
 		who = 'Taxworks'
-		what = 'Taxes and Fees'	
-	elif (s['Description'] == 'Draft 000230') | \
-		(s['Description'] == 'Draft 000234') | \
-		(s['Description'] == 'Draft 000203'):
+		what3 = 'Taxes'
+	elif (s['El_Description'] == 'Draft 000230') | \
+		(s['El_Description'] == 'Draft 000234') | \
+		(s['El_Description'] == 'Draft 000203'):
 		# note Draft 203 insurance reimbursed Dan Z for 2012
 		who = 'Agostini'
-		what = 'Insurance'	
-	elif (s['Description'] == 'Draft 000232'):
+		what3 = 'Insurance'	
+	elif (s['El_Description'] == 'Draft 000232'):
 		who = 'Reimburse Member'
-		what = 'Expenses'	
-		what2 = 'Promotional'
-	elif (s['Description'] == 'Draft 000204'):
+		what3 = 'Promotional'
+	elif (s['El_Description'] == 'Draft 000204'):
 		who = 'Reimburse Member'
-		what = 'Expenses'	
-		what2 = 'Equipment'
-	elif 'Withdrawal' in s['Description']:
-		if 'ITEM STALE DATE' in s['Memo'].upper():
+		what3 = 'Equipment'
+	elif 'Withdrawal' in s['El_Description']:
+		if 'ITEM STALE DATE' in s['El_Memo'].upper():
 			who = 'Zooko stale date checks'
-			what = 'Dues'
-			what2 = 'Bank return stale check'
-		elif 'SOS REGISTRATION' in s['Memo'].upper():
+			what3 = 'Dues Other'
+		elif 'SOS REGISTRATION' in s['El_Memo'].upper():
 			who = 'CO Sec of State'
-			what = 'Expenses'
-			what2 = 'Taxes and Fees'
+			what3 = 'SOS Registration'
 		
 		consumables = ['FDX', 'Home Depot', 'ID Enhancements', \
 			'King Soopers', 'Office Max', 'Safeway', 'Target', \
@@ -247,80 +239,99 @@ def assign_paytypes_el(s):
 		otherexp = ['Blackjack Pizza', 'Moes Broadway Bagel', \
 			'Nolo', 'Rebay']
 		for company in consumables:
-			if company.upper() in s['Memo'].upper():
+			if company.upper() in s['El_Memo'].upper():
 				who = company
-				what = 'Expenses'
-				what2 = 'Consumables'
+				what3 = 'Consumables'
 		for company in equipment:
-			if company.upper() in s['Memo'].upper():
+			if company.upper() in s['El_Memo'].upper():
 				who = company
-				what = 'Expenses'
-				what2 = 'Equipment'
+				what3 = 'Equipment'
 		for company in promotional:
-			if company.upper() in s['Memo'].upper():
+			if company.upper() in s['El_Memo'].upper():
 				who = company
-				what = 'Expenses'
-				what2 = 'Promotional'
+				what3 = 'Promotional'
 		for company in otherexp:
-			if company.upper() in s['Memo'].upper():
+			if company.upper() in s['El_Memo'].upper():
 				who = company
-				what = 'Expenses'
-				what2 = 'Other'
+				what3 = 'Other'
 	
+	# assign rollup categories
+	if what3 in ['Dues Monthly', 'Dues Recurring', 'Dues Other']:
+		what2 = 'Dues'
+	elif what3 in ['Rent and Utilities', \
+		'Rent', 'Utilities', 'Internet', 'Trash']:
+		what2 = 'Rent and Utilities'
+	elif what3 in ['Insurance', 'Taxes', 'SOS Registration', \
+		'Fees Monthly', 'Fees Other']:
+		what2 = 'Insurance, Taxes and Fees'
+	elif what3 in ['Consumables', 'Equipment', 'Promotional', 'Other']:
+		what2 = 'Other Expenses'
+	
+	if what2 == 'Transfers':
+		what1 = 'Other'
+	elif what2 in ['Dues and Donations', \
+		'Dues', 'Donations', 'Dividends', 'Workshops']:
+		what1 = 'Revenue'
+	else:
+		what1 = 'Expenses'
 		
 	return pd.Series({
-		'Paytype' : paytype, 
 		'how': how,
-		'what' : what,
+		'who' : who,
+		'what1' : what1, 
 		'what2' : what2,
-		'who' : who})
+		'what3' : what3})
 
 # dfe = dfe1
-dfe_paytypes = dfe.apply(assign_paytypes_el, axis=1)
-dfe = dfe.join(dfe_paytypes)
+dfe_cats = dfe.apply(assign_cats_el, axis=1)
+dfe = dfe.join(dfe_cats)
+
+dfe2 = dfe
+
 
 ################################################################
-# Split who = 'Rent and Utilities' 
+# Split what3 = 'Rent and Utilities' 
 ################################################################
 # ? try? df.append(s, ignore_index=True)
 
-#dfe[dfe['what'] == 'Rent and Utilities'][sumvars].groupby(dfe['Description']).sum()
-#dfe[dfe['what'] == 'Rent and Utilities'][sumvars].groupby(dfe['Date']).sum()
+#dfe[dfe['what3'] == 'Rent and Utilities'][sumvars].groupby(dfe['El_Description']).sum()
+#dfe[dfe['what3'] == 'Rent and Utilities'][sumvars].groupby(dfe['Date']).sum()
 
 def split_rentutil(s):
 	if s['Month'] < 201304:
 		rent = -1250
-		utilities = s['Debit'] - rent
+		utilities = s['Amount'] - rent
 	elif s['Month'] < 201308:
 		utilities = -150
-		rent = s['Debit'] - utilities
+		rent = s['Amount'] - utilities
+	elif s['Amount'] > -200:
+		utilities = 0
+		rent = s['Amount']
 	else:
 		utilities = -200
-		rent = s['Debit'] - utilities
+		rent = s['Amount'] - utilities
 	return pd.Series({'Rent': rent, 'Utilities': utilities})
 
-dfe2 = dfe
+dfe_not_ru = dfe[dfe['what3'] != 'Rent and Utilities']
 
-dfe_not_ru = dfe[dfe['what'] != 'Rent and Utilities']
+dfe_rent = dfe[dfe['what3'] == 'Rent and Utilities']
+dfe_rent['what3'] = 'Rent'
+dfe_rent['Amount'] = dfe_rent.apply(split_rentutil, axis=1)['Rent']
 
-dfe_rent = dfe[dfe['what'] == 'Rent and Utilities']
-dfe_rent['what'] = 'Rent'
-dfe_rent['Debit'] = dfe_rent.apply(split_rentutil, axis=1)['Rent']
-dfe_rent['Net'] = dfe_rent['Debit']
-
-dfe_util = dfe[dfe['what'] == 'Rent and Utilities']
-dfe_util['what'] = 'Utilities'
-dfe_util['Debit'] = dfe_util.apply(split_rentutil, axis=1)['Utilities']
-dfe_util['Net'] = dfe_util['Debit']
+dfe_util = dfe[dfe['what3'] == 'Rent and Utilities']
+dfe_util['what3'] = 'Utilities'
+dfe_util['Amount'] = dfe_util.apply(split_rentutil, axis=1)['Utilities']
 
 dfe = pd.concat([dfe_not_ru, dfe_rent, dfe_util])
 
-#dfe_rent[['Date','what','who','Debit','Credit']]
-#dfe_util[['Date','what','who','Debit','Credit']]
+#dfe_rent[['Date','what3','who','Amount']].sort('Date')
+#dfe_util[['Date','what3','who','Amount']].sort('Date')
+
+dfe3 = dfe
 
 
 ################################################################
-# Split who = 'Dues and Donations'... 127 entries of this, 70 splittable
+# Split what2 = 'Dues and Donations'... 127 entries of this, 70 splittable
 # first need to reconcile totals, then if matches, substitute detail
 #dfe_dd['Date'] = pd.to_datetime(dfe_dd['Date'], format='%m/%d/%Y')
 ################################################################
@@ -334,23 +345,22 @@ dfe['Mbrs_SS'] = 0
 dfe['Mbrs_Fam'] = 0	
 dfe['Mbrs_UNK'] = 0	
 
-dfe_dd = dfe[dfe['who'] == 'Dues and Donations'] # 127
-dfe_nodd = dfe[dfe['who'] != 'Dues and Donations'] # 355
-dfe_dd_bydt = dfe_dd['Net'].groupby(dfe_dd['Date']).sum()
+dfe_dd = dfe[dfe['what2'] == 'Dues and Donations'] # 127
+dfe_nodd = dfe[dfe['what2'] != 'Dues and Donations'] # 355
+dfe_dd_bydt = dfe_dd['Amount'].groupby(dfe_dd['Date']).sum()
 
 # Read in and process Revenue Detail from spreadsheet
 # this will have cash/check dues and donations
 df_revdtl = pd.read_csv(pathFinances + 'RevenueDetail.csv',skiprows=8)
 df_revdtl['Amount'] = df_revdtl['Amount'].str.replace(r'$', '')
 df_revdtl['Amount'] = df_revdtl['Amount'].str.replace(r',', '').astype(float)
-df_revdtl.rename(columns={'yrmo':'Month'}, inplace=True)
 df_revdtl['Date'] = pd.to_datetime(df_revdtl['Date'], format='%m/%d/%Y')
+df_revdtl['For Date'] = pd.to_datetime(df_revdtl['For Date'], format='%m/%d/%Y')
 
 # get only Elevations data
 df501c3box = df_revdtl[df_revdtl['Payhow'] == '501c3box']
 dfdd = df_revdtl[df_revdtl['Payhow'].isin(['cash','check'])]
 dfdd = dfdd[dfdd['Category'] != 'Flotations']
-#dfdd = dfdd[dfdd['Category'].isin(['Classes','Dues','Donations','Other Revenue','501c3 Fund','Flotations','UNKNOWN'])]
 
 # summarize by month, merge to Elevations data and reconcile
 dfdd_bydt = dfdd['Amount'].groupby(dfdd['Date']).sum()
@@ -362,7 +372,6 @@ dd_compare = pd.merge(
 dd_compare.columns = ['Date','Spreadsheet','Elevations']
 dd_compare.fillna(0, inplace=True)
 dd_compare['Diff'] = dd_compare['Spreadsheet'] - dd_compare['Elevations']
-#dd_compare[(dd_compare['Diff'] != 0) & (dd_compare['Date'] > '12-31-2012')]
 
 # next, for dates that matched and 0 diff, substitute detail rev data
 # get subset to substitute: get list of dates, then subset on it
@@ -371,24 +380,27 @@ dd_subs_datelist = list(dd_compare[(dd_compare['Diff'] == 0) & \
 	(dd_compare['Date'] > '12-31-2012') & \
 	(dd_compare['Date'] < '01-01-2015')]['Date'])
 
-dfe_nosubs = dfe_dd[~dfe_dd['Date'].isin(dd_subs_datelist)] # 57
-dfe_subs1 = dfe_dd[dfe_dd['Date'].isin(dd_subs_datelist)] # 70
-dfe_subs1['Credit'].sum() # 7642.81
+dfe_nosubs = dfe_dd[~dfe_dd['Date'].isin(dd_subs_datelist)] # 59
+dfe_subs1 = dfe_dd[dfe_dd['Date'].isin(dd_subs_datelist)] # 68
+dfe_subs1['Amount'].sum() # 7642.81
 
 # reduce so there is only one row per date, before merging to detail by date
-dfekeep = ['Date', 'Account', 'Month', 'Entries', 'Paytype', 'how']
+dfekeep = ['Date', 'Account', 'Month', 'Year', 'Entries', 'what1']
 dfe_subs2 = dfe_subs1[dfekeep].drop_duplicates() # 36
-dfddkeep = ['Date', 'Category', 'Amount', 'From', 'Payhow', 'For Date', 'Qty']
+dfddkeep = ['yrmo', 'Date', 'Category', 'Amount', 'From', \
+	'Payhow', 'For Date', 'Qty']
 
-dfe_subs3 = pd.merge(dfe_subs2, dfdd[dfddkeep], on='Date', suffixes = ('', '_y')) # 178
+dfe_subs3 = pd.merge(dfe_subs2, dfdd[dfddkeep], on='Date', \
+	suffixes = ('', '_y')) # 178
 
+# assign straightforward columns
 dfe_subs3['SourceFile'] = 'Rev Detail'
-dfe_subs3['Credit'] = dfe_subs3['Amount']
-dfe_subs3['Paytype'] = dfe_subs3['Category']
-dfe_subs3['what'] = dfe_subs3['Category']
+dfe_subs3['how'] = dfe_subs3['Payhow']
 dfe_subs3['who'] = dfe_subs3['From']
+dfe_subs3['For Month temp'] = [int(d.strftime('%Y%m')) if not pd.isnull(d) \
+	else 0 for d in dfe_subs3['For Date']]
 
-# Paytype = Dues Monthly, Workshop, Donation, 501c3 Fund (Other Revenue?)
+# assign less straightforward or derived columns
 def assign_dddtl(s):
 	''' Assign dues / donations detail fields. Note set it up
 	so that payments for multiple months are in separate rows.'''
@@ -400,11 +412,18 @@ def assign_dddtl(s):
 	Mbrs_Fam = 0
 	Mbrs_UNK = 0
 	Workshop_Disc = 0
+	what2 = s['Category']
+	what3 = 'na'
 	
 	if s['Category'] == 'Workshop':
+		what2 = 'Workshops'
 		Attendees = max(1,s['Qty'])
+	elif s['Category'] == 'Donation':
+		what2 = 'Donations'
 	
-	if s['Category'] == 'Dues Monthly':
+	elif s['Category'] == 'Dues Monthly':
+		what2 = 'Dues'
+		what3 = 'Dues Monthly'
 		Dues_Rate = s['Amount'] # enough??
 		Mbrs = 1
 		if (s['Amount'] == 12.5) | \
@@ -429,30 +448,37 @@ def assign_dddtl(s):
 			Mbrs_Fam = Mbrs_Fam * .5
 			Mbrs_UNK = Mbrs_UNK * .5
 	
+	if s['For Month temp'] == 0: 
+		For_Month = int(s['Date'].strftime('%Y%m'))
+	else: 
+		For_Month = s['For Month temp']
+	
 	return pd.Series({
+		'what2' : what2,
+		'what3' : what3,
+		'For Month' : For_Month,
 		'Attendees' : Attendees, 
-		'Workshop_Disc' : Workshop_Disc,
 		'Dues_Rate': Dues_Rate,
 		'Mbrs' : Mbrs,
 		'Mbrs_Reg' : Mbrs_Reg,
 		'Mbrs_SS' : Mbrs_SS,
 		'Mbrs_Fam' : Mbrs_Fam,
-		'Mbrs_UNK' : Mbrs_UNK})
+		'Mbrs_UNK' : Mbrs_UNK,
+		'Workshop_Disc' : Workshop_Disc})
 
 
 dfe_subs3b = dfe_subs3.apply(assign_dddtl, axis=1)
 dfe_subs4 = dfe_subs3.join(dfe_subs3b)
-dfe_subs4['Debit'] = 0
-dfe_subs4['Net'] = dfe_subs4.apply(getnet, axis=1)
 
-
-#dfe_subs4['Credit'].sum() # 7642.81
+#dfe_subs4['Amount'].sum() # 7642.81
 
 
 
-# dfe['Credit'].sum() # 86035.18
-dfe9 = pd.concat([dfe_nodd, dfe_nosubs, dfe_subs4])
-# dfe9['Credit'].sum() # 86035.18
+# dfe['Amount'].sum() # 4989.64
+dfe = pd.concat([dfe_nodd, dfe_nosubs, dfe_subs4])
+# dfe['Amount'].sum() # 4989.64
+
+dfe4 = dfe
 
 
 ################################################################
@@ -462,20 +488,31 @@ dfe9 = pd.concat([dfe_nodd, dfe_nosubs, dfe_subs4])
 # dues month in subs4 should be from the 'For Date' field!?!?
 # remove all other columns? dfe_dd.columns
 
+dfekeep = ['Date', 'Year', 'Month', 'For Month', \
+	'Account', 'SourceFile', 'Transaction ID', \
+	'how', 'who', 'what1', 'what2', 'what3', 
+	'Amount', 'Balance', 'Entries', \
+	'Attendees', 'Workshop_Disc', 'Dues_Rate', \
+	'Mbrs', 'Mbrs_Reg', 'Mbrs_SS', 'Mbrs_Fam', 'Mbrs_UNK', \
+	'El_Description', 'El_Memo', 'El_Check Number']
+dfe = dfe[dfekeep]
 
+
+dfe.to_csv('dfe.csv')
 
 ################################################################
 # Summaries (note, by Name may not print them all...)
 ################################################################
-sumvars = ['Credit','Debit','Net','Entries']
+sumvars = ['Amount','Entries']
 dfe[sumvars].groupby(dfe['Account']).sum()
 dfe[sumvars].groupby(dfe['Month']).sum()
-dfe[sumvars].groupby(dfe['Description']).sum()
+dfe[sumvars].groupby(dfe['El_Description']).sum()
 
-dfe[sumvars].groupby(dfe['Paytype']).sum()
 dfe[sumvars].groupby(dfe['how']).sum()
-dfe[sumvars].groupby(dfe['what']).sum()
 dfe[sumvars].groupby(dfe['who']).sum()
+dfe[sumvars].groupby(dfe['what1']).sum()
+dfe[sumvars].groupby(dfe['what2']).sum()
+dfe[sumvars].groupby(dfe['what3']).sum()
 
 # end of year balances... fails because do not always have 12/31 entries
 dfe[dfe['Date'] == '12/05/2012'][sumvars].groupby(dfe['Account']).sum()
@@ -485,29 +522,24 @@ dfe[dfe['Date'] == '12/05/2012'][sumvars].groupby(dfe['Account']).sum()
 ################################################################
 
 dfex = dfe[dfe['who'] == 'UNKNOWN']
-dfex[['Date','Description','Credit','Debit']]
-dfex[['Date','Memo','Credit','Debit']]
+dfex[['Date','El_Description','Amount']]
+dfex[['Date','El_Memo','Amount']]
 
 # check rent and utilities
-dfex = dfe[dfe['what'] == 'Rent']
+dfex = dfe[dfe['what2'] == 'Rent']
 dfex[sumvars].groupby(dfex['Month']).sum()
-dfex = dfe[dfe['what'] == 'Utilities']
+dfex = dfe[dfe['what2'] == 'Utilities']
 dfex[sumvars].groupby(dfex['Month']).sum()
 
-# early on: 
-# 248 how = UNKNOWN
-# 51 what = UNKNOWN
-# 51 who = UNKNOWN
-# there was at least one Square payment that was a donation not dues
 
 
 ################################################################
 # To do
 ################################################################
 # Elevations:
-# Square all going to dues right now, but some are not dues
+# Square all going to dues right now, but some are not dues, also need mbrs
+# there was at least one Square payment that was a donation not dues
 # make it give 12/31 views - note will not always have a 12/31 entry...
-# month = for month? esp double pays etc.
 
 # Everything:
 # upload RFID info from system and from spreadsheet (for Old RFID info)
