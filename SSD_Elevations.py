@@ -2,7 +2,7 @@
 import os, csv, re, datetime
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
+#import matplotlib.pyplot as plt
 
 pathElevations = '/Users/lizbaumann/Liz/SSD/_Elevations/'
 pathFinances = '/Users/lizbaumann/Liz/SSD/_Finances/'
@@ -47,6 +47,8 @@ dfe['Month'] = dfe['Date'].apply(lambda dt: int(dt.strftime('%Y%m')))
 dfe['Year'] = dfe['Date'].apply(lambda dt: int(dt.strftime('%Y')))
 dfe['For Month'] = dfe['Month']
 dfe['Entries'] = 1
+#dfe_pre2013 = dfe[dfe['Date'] < '01-01-2013']
+#dfe = dfe[dfe['Date'] >= '01-01-2013']
 dfe1 = dfe
 
 # 2011 through 2014, checking + savings: 457 entries, 13 columns
@@ -90,16 +92,13 @@ def assign_cats_el(s):
 		('SQUARE' in s['El_Description'].upper()):
 		how = 'EFT'
 		who = 'Square'
-		if s['Amount'] > 0:
-			what3 = 'Dues Monthly'
-		else:
-			what3 = 'Fees Other'
+		what2 = 'Dues and Donations'
 	elif ('PAYPAL' in s['El_Memo'].upper()) | \
 		('PAYPAL' in s['El_Description'].upper()):
 		how = 'EFT'
 		who = 'Paypal'
 		if s['Amount'] > 0:
-			what3 = 'Dues Other'
+			what2 = 'Transfers'
 		else:
 			what3 = 'Fees Monthly'
 	elif ('PP' in s['El_Memo'].upper()) & \
@@ -110,7 +109,7 @@ def assign_cats_el(s):
 	elif 'DEPOSIT ADJUSTMENT' in s['El_Description'].upper():
 		how = 'ATM' # eg deposit said 75 but check was for 70
 		who = 'Geoffrey Terrell'
-		what3 = 'Dues Other'
+		what3 = 'Dues Monthly'
 	elif 'HOME BANKING' in s['El_Description'].upper():
 		how =  'EFT'
 		who = 'Self'
@@ -225,7 +224,7 @@ def assign_cats_el(s):
 		what3 = 'Equipment'
 	elif 'Withdrawal' in s['El_Description']:
 		if 'ITEM STALE DATE' in s['El_Memo'].upper():
-			who = 'Zooko stale date checks'
+			who = 'Zooko'
 			what3 = 'Dues Other'
 		elif 'SOS REGISTRATION' in s['El_Memo'].upper():
 			who = 'CO Sec of State'
@@ -288,14 +287,13 @@ dfe = dfe.join(dfe_cats)
 
 dfe2 = dfe
 
-
 ################################################################
 # Split what3 = 'Rent and Utilities' 
 ################################################################
 # ? try? df.append(s, ignore_index=True)
 
-#dfe[dfe['what3'] == 'Rent and Utilities'][sumvars].groupby(dfe['El_Description']).sum()
-#dfe[dfe['what3'] == 'Rent and Utilities'][sumvars].groupby(dfe['Date']).sum()
+#dfe2[dfe2['what3'] == 'Rent and Utilities'][['Amount','Entries']].groupby(dfe2['El_Description']).sum()
+#dfe2[dfe2['what3'] == 'Rent and Utilities'][['Amount','Entries']].groupby(dfe2['Date']).sum()
 
 def split_rentutil(s):
 	if s['Month'] < 201304:
@@ -331,13 +329,13 @@ dfe3 = dfe
 
 
 ################################################################
-# Split what2 = 'Dues and Donations'... 127 entries of this, 70 splittable
+# Split what2 = 'Dues and Donations'... 
 # first need to reconcile totals, then if matches, substitute detail
-#dfe_dd['Date'] = pd.to_datetime(dfe_dd['Date'], format='%m/%d/%Y')
 ################################################################
+#dfe[dfe['what2'] == 'Dues and Donations'] # who=Square and UNKNOWN
 # preprocessing: add fields needed for Paypal merging
 dfe['Attendees'] = 0
-dfe['Workshop_Disc'] = 0	
+dfe['Dues_Disc'] = 0	
 dfe['Dues_Rate'] = 0
 dfe['Mbrs'] = 0	
 dfe['Mbrs_Reg'] = 0	
@@ -345,8 +343,8 @@ dfe['Mbrs_SS'] = 0
 dfe['Mbrs_Fam'] = 0	
 dfe['Mbrs_UNK'] = 0	
 
-dfe_dd = dfe[dfe['what2'] == 'Dues and Donations'] # 127
-dfe_nodd = dfe[dfe['what2'] != 'Dues and Donations'] # 355
+dfe_dd = dfe[dfe['what2'] == 'Dues and Donations'] # shape: 143
+dfe_nodd = dfe[dfe['what2'] != 'Dues and Donations'] # shape: 339
 dfe_dd_bydt = dfe_dd['Amount'].groupby(dfe_dd['Date']).sum()
 
 # Read in and process Revenue Detail from spreadsheet
@@ -359,7 +357,7 @@ df_revdtl['For Date'] = pd.to_datetime(df_revdtl['For Date'], format='%m/%d/%Y')
 
 # get only Elevations data
 df501c3box = df_revdtl[df_revdtl['Payhow'] == '501c3box']
-dfdd = df_revdtl[df_revdtl['Payhow'].isin(['cash','check'])]
+dfdd = df_revdtl[df_revdtl['Payhow'].isin(['cash','check','square'])]
 dfdd = dfdd[dfdd['Category'] != 'Flotations']
 
 # summarize by month, merge to Elevations data and reconcile
@@ -373,6 +371,9 @@ dd_compare.columns = ['Date','Spreadsheet','Elevations']
 dd_compare.fillna(0, inplace=True)
 dd_compare['Diff'] = dd_compare['Spreadsheet'] - dd_compare['Elevations']
 
+# check for differences, do not have detail before 2013, and 3 dates in 2013
+#dd_compare[(dd_compare['Diff'] != 0) & (dd_compare['Elevations'] != 0) & (dd_compare['Date'] > '12-31-2012') & (dd_compare['Date'] < '01-01-2015')]
+
 # next, for dates that matched and 0 diff, substitute detail rev data
 # get subset to substitute: get list of dates, then subset on it
 dd_subs_datelist = list(dd_compare[(dd_compare['Diff'] == 0) & \
@@ -380,18 +381,20 @@ dd_subs_datelist = list(dd_compare[(dd_compare['Diff'] == 0) & \
 	(dd_compare['Date'] > '12-31-2012') & \
 	(dd_compare['Date'] < '01-01-2015')]['Date'])
 
-dfe_nosubs = dfe_dd[~dfe_dd['Date'].isin(dd_subs_datelist)] # 59
-dfe_subs1 = dfe_dd[dfe_dd['Date'].isin(dd_subs_datelist)] # 68
-dfe_subs1['Amount'].sum() # 7642.81
+dfe_nosubs = dfe_dd[~dfe_dd['Date'].isin(dd_subs_datelist)] # shape 67
+dfe_subs1 = dfe_dd[dfe_dd['Date'].isin(dd_subs_datelist)] # shape 76
+dfe_subs1['Amount'].sum() # 7907.35
 
 # reduce so there is only one row per date, before merging to detail by date
 dfekeep = ['Date', 'Account', 'Month', 'Year', 'Entries', 'what1']
-dfe_subs2 = dfe_subs1[dfekeep].drop_duplicates() # 36
+dfe_subs2 = dfe_subs1[dfekeep].drop_duplicates() # shape 43
 dfddkeep = ['yrmo', 'Date', 'Category', 'Amount', 'From', \
 	'Payhow', 'For Date', 'Qty']
 
 dfe_subs3 = pd.merge(dfe_subs2, dfdd[dfddkeep], on='Date', \
-	suffixes = ('', '_y')) # 178
+	suffixes = ('', '_y')) # shape 187
+#dfe_nosubs.shape, dfe_subs1.shape, dfe_subs2.shape, dfe_subs3.shape
+
 
 # assign straightforward columns
 dfe_subs3['SourceFile'] = 'Rev Detail'
@@ -411,9 +414,14 @@ def assign_dddtl(s):
 	Mbrs_SS = 0
 	Mbrs_Fam = 0
 	Mbrs_UNK = 0
-	Workshop_Disc = 0
+	Dues_Disc = 0
 	what2 = s['Category']
 	what3 = 'na'
+	
+	if s['For Month temp'] == 0: 
+		For_Month = int(s['Date'].strftime('%Y%m'))
+	else: 
+		For_Month = s['For Month temp']
 	
 	if s['Category'] == 'Workshop':
 		what2 = 'Workshops'
@@ -426,32 +434,28 @@ def assign_dddtl(s):
 		what3 = 'Dues Monthly'
 		Dues_Rate = s['Amount'] # enough??
 		Mbrs = 1
-		if (s['Amount'] == 12.5) | \
-			(s['Amount'] == 25) | \
-			(s['Amount'] == 40):
+		if (s['For Month temp'] == 201412) & (s['who'] == 'John West'):
+			Mbrs_SS = 0.5 # 12/1/14 dues split over 2 months
+			Mbrs = 0.5
+		elif ((s['Amount'] >= 11) & (s['Amount'] <= 13)) | \
+			((s['Amount'] >= 23) & (s['Amount'] <= 25)) | \
+			(s['Amount'] == 30) | (s['Amount'] == 40):
 			Mbrs_SS = 1
-		if (s['Amount'] == 37.5) | \
-			(s['Amount'] == 75):
+		elif ((s['Amount'] >= 35) & (s['Amount'] <= 38)) | \
+			((s['Amount'] >= 62) & (s['Amount'] <= 65)) | \
+			((s['Amount'] >= 71) & (s['Amount'] <= 75)):
 			Mbrs_Reg = 1
-		if (s['Amount'] == 50) | \
-			(s['Amount'] == 100):
+		elif ((s['Amount'] >= 48) & (s['Amount'] <= 50)) | \
+			((s['Amount'] >= 95) & (s['Amount'] <= 100)):
 			Mbrs_Fam = 1
 		else:
 			Mbrs_UNK = 1
-		if (s['Amount'] == 12.5) | \
-			(s['Amount'] == 37.5) | \
-			(s['Amount'] == 50):
-			Workshop_Disc = 1
-			Mbrs = Mbrs * .5
-			Mbrs_Reg = Mbrs_Reg * .5
-			Mbrs_SS = Mbrs_SS * .5
-			Mbrs_Fam = Mbrs_Fam * .5
-			Mbrs_UNK = Mbrs_UNK * .5
-	
-	if s['For Month temp'] == 0: 
-		For_Month = int(s['Date'].strftime('%Y%m'))
-	else: 
-		For_Month = s['For Month temp']
+		if (Mbrs == 1) & \
+			(((s['Amount'] >= 11) & (s['Amount'] <= 13)) | \
+			((s['Amount'] >= 31) & (s['Amount'] <= 33)) | \
+			((s['Amount'] >= 35) & (s['Amount'] <= 38)) | \
+			((s['Amount'] >= 46) & (s['Amount'] <= 50))):
+			Dues_Disc = 1
 	
 	return pd.Series({
 		'what2' : what2,
@@ -464,35 +468,31 @@ def assign_dddtl(s):
 		'Mbrs_SS' : Mbrs_SS,
 		'Mbrs_Fam' : Mbrs_Fam,
 		'Mbrs_UNK' : Mbrs_UNK,
-		'Workshop_Disc' : Workshop_Disc})
+		'Dues_Disc' : Dues_Disc})
 
 
 dfe_subs3b = dfe_subs3.apply(assign_dddtl, axis=1)
 dfe_subs4 = dfe_subs3.join(dfe_subs3b)
 
-#dfe_subs4['Amount'].sum() # 7642.81
+dfe_subs4['Amount'].sum() # 7907.35
 
 
 
-# dfe['Amount'].sum() # 4989.64
+dfe['Amount'].sum() # 4989.64
 dfe = pd.concat([dfe_nodd, dfe_nosubs, dfe_subs4])
-# dfe['Amount'].sum() # 4989.64
+dfe['Amount'].sum() # 4989.64
 
 dfe4 = dfe
 
 
 ################################################################
-# Next: 
+# Get primary fields (to be merged with Paypal data) and a csv copy
 ################################################################
-# include square payment detail
-# dues month in subs4 should be from the 'For Date' field!?!?
-# remove all other columns? dfe_dd.columns
-
 dfekeep = ['Date', 'Year', 'Month', 'For Month', \
 	'Account', 'SourceFile', 'Transaction ID', \
 	'how', 'who', 'what1', 'what2', 'what3', 
 	'Amount', 'Balance', 'Entries', \
-	'Attendees', 'Workshop_Disc', 'Dues_Rate', \
+	'Attendees', 'Dues_Disc', 'Dues_Rate', \
 	'Mbrs', 'Mbrs_Reg', 'Mbrs_SS', 'Mbrs_Fam', 'Mbrs_UNK', \
 	'El_Description', 'El_Memo', 'El_Check Number']
 dfe = dfe[dfekeep]
@@ -503,33 +503,36 @@ dfe.to_csv('dfe.csv')
 ################################################################
 # Summaries (note, by Name may not print them all...)
 ################################################################
-sumvars = ['Amount','Entries']
-dfe[sumvars].groupby(dfe['Account']).sum()
-dfe[sumvars].groupby(dfe['Month']).sum()
-dfe[sumvars].groupby(dfe['El_Description']).sum()
+sumvars = ['Amount', 'Entries', 'Attendees', 'Mbrs', 'Dues_Disc']
+mbrvars = ['Mbrs', 'Mbrs_Reg', 'Mbrs_SS', 'Mbrs_Fam', 'Mbrs_UNK']
+dfecur = dfe[(dfe['Date'] >= '01-01-2013') & (dfe['Date'] < '01-01-2015')]
 
-dfe[sumvars].groupby(dfe['how']).sum()
-dfe[sumvars].groupby(dfe['who']).sum()
-dfe[sumvars].groupby(dfe['what1']).sum()
-dfe[sumvars].groupby(dfe['what2']).sum()
-dfe[sumvars].groupby(dfe['what3']).sum()
+dfecur[sumvars].groupby(dfecur['Account']).sum()
+dfecur[mbrvars].groupby(dfecur['Account']).sum()
+dfecur[sumvars].groupby(dfecur['Month']).sum()
+dfecur[sumvars].groupby(dfecur['For Month']).sum()
 
-# end of year balances... fails because do not always have 12/31 entries
-dfe[dfe['Date'] == '12/05/2012'][sumvars].groupby(dfe['Account']).sum()
+
+dfecur[sumvars].groupby(dfecur['how']).sum()
+dfecur[sumvars].groupby(dfecur['what1']).sum()
+dfecur[sumvars].groupby(dfecur['what2']).sum()
+dfecur[sumvars].groupby(dfecur['what3']).sum()
+
+dfecur_dues = dfecur[dfecur['what2'] == 'Dues']
+dfecur_dues[sumvars].groupby(dfecur_dues['who']).sum()
+dfecur_dues[mbrvars].groupby(dfecur_dues['who']).sum()
+dfecur_dues[sumvars].groupby(dfecur_dues['For Month']).sum()
+dfecur_dues[mbrvars].groupby(dfecur_dues['For Month']).sum()
+
+dfecur_exp = dfecur[dfecur['what1'] == 'Expenses']
+dfecur_exp[sumvars].groupby(dfecur_exp['who']).sum()
+
 
 ################################################################
 # Use for troubleshooting
 ################################################################
-
-dfex = dfe[dfe['who'] == 'UNKNOWN']
-dfex[['Date','El_Description','Amount']]
-dfex[['Date','El_Memo','Amount']]
-
-# check rent and utilities
-dfex = dfe[dfe['what2'] == 'Rent']
-dfex[sumvars].groupby(dfex['Month']).sum()
-dfex = dfe[dfe['what2'] == 'Utilities']
-dfex[sumvars].groupby(dfex['Month']).sum()
+dfecur[dfecur['what2'] == 'Dues and Donations']
+dfecur[dfecur['Mbrs_UNK'] != 0]
 
 
 
@@ -537,36 +540,38 @@ dfex[sumvars].groupby(dfex['Month']).sum()
 # To do
 ################################################################
 # Elevations:
-# Square all going to dues right now, but some are not dues, also need mbrs
-# there was at least one Square payment that was a donation not dues
-# make it give 12/31 views - note will not always have a 12/31 entry...
+# make it give 12/31 balances - note will not always have a 12/31 entry...
+#dfecur[dfecur['Date'] == '12/05/2012'][sumvars].groupby(dfecur['Account']).sum()
+# Dues and Donations, still unknown: 2/1/13 $139 of 259 and 3/22/13 $680 of 995, total 1254
 
 # Everything:
-# upload RFID info from system and from spreadsheet (for Old RFID info)
+# also upload RFID info from system and from spreadsheet (for Old RFID info)
 # joel and liz and others (rob, jennifer) - itemize reimbursements as dues
 # workshop discounts, and other dues credits, how to do better
 # build recon with spreadsheet
+# build UI
+# should transfers be other or revenue?
 
 # Need process (a form really) for recording itemization of deposits:
 # date
 # what: dues, donations, workshop fees
 # from who
-# what2, if dues: what month(s) for dues (dues rate, # months, which months?, discount applied?)
-# what2, if donation: detail e.g. beverage money or donation
-# what2, if workshop: when, who was teacher, quantity (how many fees being paid)
+# for date: if dues, what month(s) for; if workshop, date of class
+# is a workshop discount applied to this members dues payment?
+# if donation: detail e.g. beverage money or donation
+# if workshop: when, who was teacher, quantity (how many fees being paid)
 # special for 501c3
 
 
-# do NOT know what this is - ask other admins?:
-326  10/07/2014                     Withdrawal     0.00  -100.00
 
 
 
 ################################################################
 # CONSIDER FOR CHANGES: 
-# Zooko stale date checks treatment (12/05/2012)
+# What is proper way to handle these things: Zooko stale checks 12/5/12, John E Reimburse Kreizel Deposit, Dan Z reimburse insurance, reimbursing members in general, see drafts 202, 203, 204, 206, 232... who = the underlying who, or the member? (and, not always a member, eg Christa)
 # could split Debit -1253 into 3 fee, 1250 Rent (201202-201204): who = 'Rent'
-# reimbursing members: how to handle? see drafts 202, 203, 204, 206, 232... who = the underlying who, or the member? (and, not always a member, eg Christa)
+# do NOT know what this is - ask other admins?:
+#326  10/07/2014                     Withdrawal     0.00  -100.00
 ################################################################
 
 

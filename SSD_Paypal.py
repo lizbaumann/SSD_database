@@ -9,13 +9,13 @@ pathPaypal = '/Users/lizbaumann/Liz/SSD/_Paypal/'
 ################################################################
 # Read in and process Paypal data
 ################################################################
-dfp = pd.DataFrame()
-
 def read_paypal(csvfile):
 	dfpname = pd.read_csv(pathPaypal + csvfile, thousands=',')
 	dfpname['SourceFile'] = csvfile
 	global dfp
 	dfp = dfp.append(dfpname, ignore_index=True)
+
+dfp = pd.DataFrame()
 
 #read_paypal('Paypal_sample.csv')
 read_paypal('Paypal_2012.csv')
@@ -27,62 +27,111 @@ read_paypal('Paypal_2014_new.csv')
 
 # Preprocessing
 dfp.columns = map(str.strip, dfp.columns)
+dfp = dfp[~dfp['Type'].isin(['Update to eCheck Sent', \
+	'Update to eCheck Received', 'Payment Review', 
+	'Cancelled Fee', 'PayPal card confirmation refund'])]
+
 dfp['Entries'] = 1
 dfp['Account'] = 'Paypal'
 dfp[['Item Title']] = dfp[['Item Title']].astype(str)
 dfp[['Option 1 Name']] = dfp[['Option 1 Name']].astype(str)
 dfp[['Option 1 Value']] = dfp[['Option 1 Value']].astype(str)
-
-dfp = dfp[~dfp['Type'].isin(['Update to eCheck Sent', \
-	'Update to eCheck Received', 'Payment Review', 
-	'Cancelled Fee', 'PayPal card confirmation refund']
-
-# dfp = dfp[dfp['Type'] != 'Update to eCheck Sent']
-# dfp = dfp[dfp['Type'] != 'Update to eCheck Received']
-# dfp = dfp[dfp['Type'] != 'Payment Review']
-# dfp = dfp[dfp['Type'] != 'Cancelled Fee']
-# dfp = dfp[dfp['Type'] != 'PayPal card confirmation refund']
-
 dfp[['Fee']] = dfp[['Fee']].astype(float)
 dfp['Date'] = pd.to_datetime(dfp['Date'], format='%m/%d/%Y')
 dfp['Month'] = dfp['Date'].apply(lambda dt: int(dt.strftime('%Y%m')))
 dfp['Year'] = dfp['Date'].apply(lambda dt: int(dt.strftime('%Y')))
 dfp['For Month'] = dfp['Month']
 dfp['how'] = 'EFT'
-dfp['what2'] = 'na'
+
 dfp1 = dfp
 
-# need to assign how, who, what, what2
-what: Dividend, Dues, Expenses, Fee Monthly, Fee Other, Insurance, Internet, Mill, Reimburse Kreizel Deposit, Rent, Taxes and Fees, Transfer, Trash, Utilities, UNKNOWN... Workshop, Donation, Dues Monthly, 501c3 Fund, Other Revenue
+
+################################################################
+################################################################
+# NEED TO DEAL WITH: 
+# Refunds, eg: gross -24, fee 0.7, net -23.3
+# Amount = Gross or fee, eg: gross 25, fee -1.03, net 23.97
+#how to transpose? run through twice then reassign certain fields and concat?
+#revenue  dues 25
+#expenses  fees -1.03
+################################################################
+################################################################
 
 
-# Assign paytype (dues vs workshops etc), member count fields
-def assign_paytype(s):
-	paytype = 'UNKNOWN'
+
+
+def assign_cats_pp(s):
+	'''Assign descriptors for every transaction:
+	how (ATM, Check, EFT)
+	who (Paypal, Square, member, vendor, etc.)
+	what1 (revenue, expense, other) 
+	what2 (dues, donations, dividends, workshops, 501c3 Fund, other revenue,
+		rent and utilities, taxes insurance and fees, 
+		special expense, other expense, 
+		transfers)
+	what3 (dues type: monthly, recurring, other; 
+		expense type: rent, utilities, internet, trash, 
+		taxes, licenses, fees monthly, fees other,
+		(special expense detail),  
+		consumables, equipment, promotional, other expense)'''
+	
+	what1 = 'UNKNOWN'
+	what2 = 'UNKNOWN'
+	what3 = 'na'
+	
 	if s['Type'] == 'Web Accept Payment Received':
 		if 'per person' in s['Item Title']:
-			paytype = 'Workshop'
+			what2 = 'Workshops'
 		elif 'Monthly Dues' in s['Item Title']:
-			paytype = 'Dues Monthly'
+			what3 = 'Dues Monthly'
 	elif (s['Type'] == 'Recurring Payment Received') | \
 		(s['Type'] == 'Subscription Payment Received') | \
 		(s['Type'] == 'Payment Received'):
-		paytype = 'Dues Recurring'
+		what3 = 'Dues Recurring'
 	elif (s['Type'] == 'Donation Received') | \
 		(s['Type'] == 'Mobile Payment Received'):
-		paytype = 'Donation'
+		what2 = 'Donations'
 	elif s['Type'] == 'Refund':
-		paytype = 'Refund'
+		what2 = 'Refunds'
 	elif s['Name'] == 'Bank Account':
-		paytype = 'Transfer'
+		what2 = 'Transfers'
 	elif s['Name'] == 'PayPal Monthly Billing' :
-		paytype = 'Fee Monthly'
-	return paytype
+		what3 = 'Fees Monthly'
+	
+	# assign rollup categories
+	if what3 in ['Dues Monthly', 'Dues Recurring', 'Dues Other']:
+		what2 = 'Dues'
+	elif what3 in ['Rent and Utilities', \
+		'Rent', 'Utilities', 'Internet', 'Trash']:
+		what2 = 'Rent and Utilities'
+	elif what3 in ['Insurance', 'Taxes', 'SOS Registration', \
+		'Fees Monthly', 'Fees Other']:
+		what2 = 'Insurance, Taxes and Fees'
+	elif what3 in ['Consumables', 'Equipment', 'Promotional', 'Other']:
+		what2 = 'Other Expenses'
+	
+	if what2 == 'Transfers':
+		what1 = 'Other'
+	elif what2 in ['Dues and Donations', \
+		'Dues', 'Donations', 'Dividends', 'Workshops']:
+		what1 = 'Revenue'
+	else:
+		what1 = 'Expenses'
+	
+	return pd.Series({
+		'what1' : what2, 
+		'what2' : what2,
+		'what3' : what3})
 
+
+dfp_cats = dfp.apply(assign_cats_pp, axis=1)
+dfp = dfp.join(dfp_cats)
+
+dfp2 = dfp
 
 def assign_members(s):
 	''' Derive members, dues rate, workshop discount,
-	workshop attendees. Prerequisite: Paytype is assigned '''
+	workshop attendees. Prerequisite: what2 is assigned '''
 	mbrs = 0.0
 	duesrate = 0.0
 	mbrs_reg = 0.0
@@ -92,7 +141,7 @@ def assign_members(s):
 	workshopdisc = 0
 	attendees = 0
 	
-	if 'Dues' in s['Paytype']:
+	if 'Dues' in s['what2']:
 		if '3 Months' in s['Option 1 Value']:
 			mbrs = 3.0
 		elif ('2 Months' in s['Option 1 Value']) | (s['Gross'] == 130):
@@ -110,7 +159,7 @@ def assign_members(s):
 			# workshops handled by either charging half or by refund
 			workshopdisc = 1
 			duesrate = s['Gross'] * 2 / mbrs
-		elif s['Gross'] == 55:
+		elif (s['Gross'] == 55) & (s['Month'] < 201301):
 			# used to give $10 off, in 2012
 			workshopdisc = 1
 			duesrate = 65
@@ -144,7 +193,7 @@ def assign_members(s):
 		else: 
 			mbrs_unk = mbrs
 	
-	if s['Paytype'] == 'Workshop':
+	if s['what2'] == 'Workshops':
 		if ('$30.00 per person' in s['Item Title']) & \
 			('3D' in s['Item Title']):
 			attendees = 2
@@ -158,14 +207,17 @@ def assign_members(s):
 		'Mbrs_UNK' : mbrs_unk,
 		'Dues_Rate' : duesrate,
 		'Attendees' : attendees,
-		'Workshop_Disc' : workshopdisc})
+		'Dues_Disc' : workshopdisc})
 
 
-
-dfp['Paytype'] = dfp.apply(assign_paytype, axis=1)
 dfp_mbrs = dfp.apply(assign_members, axis=1)
 dfp = dfp.join(dfp_mbrs)
 
+dfp3 = dfp
+
+################################################################
+# Get primary fields (to be merged with Paypal data) and a csv copy
+################################################################
 dfp.rename(columns={'Gross' : 'Amount', \
 	'Name' : 'who', \
 	'Time' : 'PP_Time', \
@@ -179,9 +231,9 @@ dfp.rename(columns={'Gross' : 'Amount', \
 
 dfpkeep = ['Date', 'Year', 'Month', 'For Month', \
 	'Account', 'SourceFile', 'Transaction ID', \
-	'Paytype', 'how', 'who', 'what', 'what2', 
+	'what2', 'how', 'who', 'what', 'what2', 
 	'Amount', 'Balance', 'Entries', \
-	'Attendees', 'Workshop_Disc', 'Dues_Rate', \
+	'Attendees', 'Dues_Disc', 'Dues_Rate', \
 	'Mbrs', 'Mbrs_Reg', 'Mbrs_SS', 'Mbrs_Fam', 'Mbrs_UNK', \
 	'PP_Time', 'PP_Type', 'PP_Status', 'PP_Item Title', \
 	'PP_Option 1', 'PP_Option 2', 'PP_From Email']
@@ -194,14 +246,14 @@ dfp.to_csv('dfp.csv')
 ################################################################
 sumvars = ['Gross','Fee','Dues_Rate','Entries','Mbrs','Attendees']
 sumvars2 = ['Gross','Fee','Net','Entries']
-mbrvars = ['Mbrs','Mbrs_Reg','Mbrs_SS','Mbrs_Fam','Mbrs_UNK','Workshop_Disc']
+mbrvars = ['Mbrs','Mbrs_Reg','Mbrs_SS','Mbrs_Fam','Mbrs_UNK','Dues_Disc']
 
-dfp[sumvars].groupby(dfp['Paytype']).sum()
-dfp[mbrvars].groupby(dfp['Paytype']).sum()
+dfp[sumvars].groupby(dfp['what2']).sum()
+dfp[mbrvars].groupby(dfp['what2']).sum()
 dfp[sumvars].groupby(dfp['Dues_Rate']).sum()
 dfp[mbrvars].groupby(dfp['Dues_Rate']).sum()
 
-dfp2 = dfp[dfp['Paytype'] != 'Transfer']
+dfp2 = dfp[dfp['what2'] != 'Transfer']
 dfp2[sumvars].groupby(dfp2['Month']).sum()
 dfp2[mbrvars].groupby(dfp2['Month']).sum()
 
@@ -212,11 +264,11 @@ dfp2[mbrvars].groupby(dfp2['Month']).sum()
 
 # choose one of these, then run the summaries on it
 dfp2 = dfp[dfp['Mbrs_UNK'] > 0]
-dfp2 = dfp[dfp['Paytype'] == 'UNKNOWN']
-dfp2 = dfp[dfp['Paytype'] == 'Fee Other']
+dfp2 = dfp[dfp['what2'] == 'UNKNOWN']
+dfp2 = dfp[dfp['what2'] == 'Fee Other']
 dfp2 = dfp[dfp['Type'] == 'Cancelled Fee']
 
-dfp2[['Name','Month','Gross','Dues_Rate','Workshop_Disc']]
+dfp2[['Name','Month','Gross','Dues_Rate','Dues_Disc']]
 dfp2[['Type','Gross','Dues_Rate']]
 dfp2[['Option 1 Value','Gross','Dues_Rate']]
 dfp2[['Item Title','Gross','Dues_Rate']]
