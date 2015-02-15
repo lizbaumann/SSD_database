@@ -49,7 +49,8 @@ dfe['For Month'] = dfe['Month']
 dfe['Entries'] = 1
 #dfe_pre2013 = dfe[dfe['Date'] < '01-01-2013']
 #dfe = dfe[dfe['Date'] >= '01-01-2013']
-dfe1 = dfe
+
+dfe1 = dfe.copy()
 
 # 2011 through 2014, checking + savings: 457 entries, 13 columns
 
@@ -98,7 +99,7 @@ def assign_cats_el(s):
 		how = 'EFT'
 		who = 'Paypal'
 		if s['Amount'] > 0:
-			what2 = 'Transfers'
+			what3 = 'Transfers'
 		else:
 			what3 = 'Fees Monthly'
 	elif ('PP' in s['El_Memo'].upper()) & \
@@ -113,11 +114,11 @@ def assign_cats_el(s):
 	elif 'HOME BANKING' in s['El_Description'].upper():
 		how =  'EFT'
 		who = 'Self'
-		what2 = 'Transfers'
+		what3 = 'Transfers'
 	elif 'DIVIDEND' in s['El_Description'].upper():
 		how =  'EFT'
 		who = 'Elevations'
-		what2 = 'Dividends'
+		what3 = 'Dividends'
 	elif 'DEPOSIT' in s['El_Description'].upper():
 		what2 = 'Dues and Donations'
 	
@@ -254,13 +255,16 @@ def assign_cats_el(s):
 				who = company
 				what3 = 'Other'
 	
-	# assign rollup categories
-	if what3 in ['Dues Monthly', 'Dues Recurring', 'Dues Other']:
+	# assign rollup categories... used by both PP and El, maybe move?
+	if what3 in ['Workshops', 'Donations', 'Dividends', 'Transfers']:
+		what2 = what3
+	elif 'Dues' in what3:
 		what2 = 'Dues'
 	elif what3 in ['Rent and Utilities', \
 		'Rent', 'Utilities', 'Internet', 'Trash']:
 		what2 = 'Rent and Utilities'
 	elif what3 in ['Insurance', 'Taxes', 'SOS Registration', \
+		'Fees Paypal Monthly', 'Fees Paypal Transactions', \
 		'Fees Monthly', 'Fees Other']:
 		what2 = 'Insurance, Taxes and Fees'
 	elif what3 in ['Consumables', 'Equipment', 'Promotional', 'Other']:
@@ -285,7 +289,7 @@ def assign_cats_el(s):
 dfe_cats = dfe.apply(assign_cats_el, axis=1)
 dfe = dfe.join(dfe_cats)
 
-dfe2 = dfe
+dfe2 = dfe.copy()
 
 ################################################################
 # Split what3 = 'Rent and Utilities' 
@@ -325,7 +329,7 @@ dfe = pd.concat([dfe_not_ru, dfe_rent, dfe_util])
 #dfe_rent[['Date','what3','who','Amount']].sort('Date')
 #dfe_util[['Date','what3','who','Amount']].sort('Date')
 
-dfe3 = dfe
+dfe3 = dfe.copy()
 
 
 ################################################################
@@ -482,7 +486,7 @@ dfe['Amount'].sum() # 4989.64
 dfe = pd.concat([dfe_nodd, dfe_nosubs, dfe_subs4])
 dfe['Amount'].sum() # 4989.64
 
-dfe4 = dfe
+dfe4 = dfe.copy()
 
 
 ################################################################
