@@ -20,10 +20,11 @@ def read_elevations(csvfile, acct = 'Checking'):
 	dfe = dfe.append(dfename, ignore_index=True)
 
 dfe = pd.DataFrame()
-read_elevations('Elevations_2011.csv')
-read_elevations('Elevations_2012.csv')
-read_elevations('Elevations_2013.csv')
+read_elevations('Elevations_20150214.csv')
 read_elevations('Elevations_2014.csv')
+read_elevations('Elevations_2013.csv')
+read_elevations('Elevations_2012.csv')
+read_elevations('Elevations_2011.csv')
 read_elevations('Elevations_Savings_20141231.csv', 'Savings')
 
 # Preprocessing
@@ -59,15 +60,17 @@ def assign_cats_el(s):
 	how (ATM, Check, EFT)
 	who (Paypal, Square, member, vendor, etc.)
 	what1 (revenue, expense, other) 
-	what2 (dues, donations, dividends, workshops, 501c3 Fund, other revenue,
+	what2 (dues, donations, dividends, workshops, other revenue,
+		501c3 Fund, transfers, 
 		rent and utilities, taxes insurance and fees, 
-		special expense, other expense, 
-		transfers)
-	what3 (dues type: monthly, recurring, other; 
+		special expense, other expense)
+	what3 (dues type: monthly, recurring, refund, other; 
 		expense type: rent, utilities, internet, trash, 
-		taxes, licenses, fees monthly, fees other,
+		taxes, licenses, fees monthly, fees other, 
+		fees paypal monthly, fees paypal transactions,
 		(special expense detail),  
-		consumables, equipment, promotional, other expense)'''
+		consumables, equipment, promotional, other expense;
+		transfers)'''
 	
 	how = 'UNKNOWN'
 	who = 'UNKNOWN'
@@ -436,22 +439,28 @@ def assign_dddtl(s):
 	elif s['Category'] == 'Dues Monthly':
 		what2 = 'Dues'
 		what3 = 'Dues Monthly'
-		Dues_Rate = s['Amount'] # enough??
 		Mbrs = 1
 		if (s['For Month temp'] == 201412) & (s['who'] == 'John West'):
 			Mbrs_SS = 0.5 # 12/1/14 dues split over 2 months
 			Mbrs = 0.5
+			Dues_Rate = 25.0
 		elif ((s['Amount'] >= 11) & (s['Amount'] <= 13)) | \
 			((s['Amount'] >= 23) & (s['Amount'] <= 25)) | \
 			(s['Amount'] == 30) | (s['Amount'] == 40):
 			Mbrs_SS = 1
+			Dues_Rate = 25.0
 		elif ((s['Amount'] >= 35) & (s['Amount'] <= 38)) | \
 			((s['Amount'] >= 62) & (s['Amount'] <= 65)) | \
 			((s['Amount'] >= 71) & (s['Amount'] <= 75)):
 			Mbrs_Reg = 1
+			if (s['Amount'] >= 62) & (s['Amount'] <= 65):
+				Dues_Rate = 65.0
+			else:
+				Dues_Rate = 75.0
 		elif ((s['Amount'] >= 48) & (s['Amount'] <= 50)) | \
 			((s['Amount'] >= 95) & (s['Amount'] <= 100)):
 			Mbrs_Fam = 1
+			Dues_Rate = 100.0
 		else:
 			Mbrs_UNK = 1
 		if (Mbrs == 1) & \
@@ -492,7 +501,8 @@ dfe4 = dfe.copy()
 ################################################################
 # Get primary fields (to be merged with Paypal data) and a csv copy
 ################################################################
-dfekeep = ['Date', 'Year', 'Month', 'For Month', \
+dfe['For Year'] = dfe['For Month'].apply(lambda ym: int(ym/100))
+dfekeep = ['Date', 'Month', 'For Year', 'For Month', \
 	'Account', 'SourceFile', 'Transaction ID', \
 	'how', 'who', 'what1', 'what2', 'what3', 
 	'Amount', 'Balance', 'Entries', \
@@ -501,15 +511,16 @@ dfekeep = ['Date', 'Year', 'Month', 'For Month', \
 	'El_Description', 'El_Memo', 'El_Check Number']
 dfe = dfe[dfekeep]
 
-
-dfe.to_csv('dfe.csv')
+dfe.to_csv(pathElevations + 'dfe.csv')
 
 ################################################################
 # Summaries (note, by Name may not print them all...)
 ################################################################
 sumvars = ['Amount', 'Entries', 'Attendees', 'Mbrs', 'Dues_Disc']
 mbrvars = ['Mbrs', 'Mbrs_Reg', 'Mbrs_SS', 'Mbrs_Fam', 'Mbrs_UNK']
-dfecur = dfe[(dfe['Date'] >= '01-01-2013') & (dfe['Date'] < '01-01-2015')]
+
+dfecur = dfe[(dfe['Date'] >= '01-01-2013') & (dfe['Date'] < '02-15-2015')]
+dfecur_dues = dfecur[dfecur['what2'] == 'Dues']
 
 dfecur[sumvars].groupby(dfecur['Account']).sum()
 dfecur[mbrvars].groupby(dfecur['Account']).sum()
@@ -522,9 +533,11 @@ dfecur[sumvars].groupby(dfecur['what1']).sum()
 dfecur[sumvars].groupby(dfecur['what2']).sum()
 dfecur[sumvars].groupby(dfecur['what3']).sum()
 
-dfecur_dues = dfecur[dfecur['what2'] == 'Dues']
-dfecur_dues[sumvars].groupby(dfecur_dues['who']).sum()
-dfecur_dues[mbrvars].groupby(dfecur_dues['who']).sum()
+dfecur_dues[sumvars].groupby(dfecur_dues['Dues_Rate']).sum()
+dfecur_dues[mbrvars].groupby(dfecur_dues['Dues_Rate']).sum()
+dfecur_dues[sumvars].groupby(dfecur_dues['Mbrs']).sum()
+dfecur_dues[mbrvars].groupby(dfecur_dues['Mbrs']).sum()
+
 dfecur_dues[sumvars].groupby(dfecur_dues['For Month']).sum()
 dfecur_dues[mbrvars].groupby(dfecur_dues['For Month']).sum()
 
@@ -538,6 +551,14 @@ dfecur_exp[sumvars].groupby(dfecur_exp['who']).sum()
 dfecur[dfecur['what2'] == 'Dues and Donations']
 dfecur[dfecur['Mbrs_UNK'] != 0]
 
+x = dfecur_dues[dfecur_dues['Mbrs_UNK'] != 0]
+x = dfe[(dfe['Name'] == '') & (dfe['For Month'] == 201404)]
+
+x = dfecur_dues[dfecur_dues['Dues_Rate'] == 0]
+
+x[['Name','Date','Gross','Dues_Rate','Mbrs','Type', 'Option 1 Value']].sort('Date')
+x[['Name','Date','Gross','Amount','what2','Dues_Rate','Dues_Disc','Type','Mbrs','Mbrs_Reg','Mbrs_SS','Mbrs_UNK']].sort('Date')
+x[['Name','Date','Gross','Type', 'Option 1 Value']].sort('Date')
 
 
 ################################################################
@@ -547,27 +568,6 @@ dfecur[dfecur['Mbrs_UNK'] != 0]
 # make it give 12/31 balances - note will not always have a 12/31 entry...
 #dfecur[dfecur['Date'] == '12/05/2012'][sumvars].groupby(dfecur['Account']).sum()
 # Dues and Donations, still unknown: 2/1/13 $139 of 259 and 3/22/13 $680 of 995, total 1254
-
-# Everything:
-# also upload RFID info from system and from spreadsheet (for Old RFID info)
-# joel and liz and others (rob, jennifer) - itemize reimbursements as dues
-# workshop discounts, and other dues credits, how to do better
-# build recon with spreadsheet
-# build UI
-# should transfers be other or revenue?
-
-# Need process (a form really) for recording itemization of deposits:
-# date
-# what: dues, donations, workshop fees
-# from who
-# for date: if dues, what month(s) for; if workshop, date of class
-# is a workshop discount applied to this members dues payment?
-# if donation: detail e.g. beverage money or donation
-# if workshop: when, who was teacher, quantity (how many fees being paid)
-# special for 501c3
-
-
-
 
 
 ################################################################

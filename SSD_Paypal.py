@@ -18,6 +18,8 @@ def read_paypal(csvfile):
 dfp = pd.DataFrame()
 
 #read_paypal('Paypal_sample.csv')
+read_paypal('Paypal_20150214_new.csv')
+read_paypal('Paypal_20150214_old.csv')
 read_paypal('Paypal_2014_new.csv')
 read_paypal('Paypal_2014_old.csv')
 read_paypal('Paypal_2013.csv')
@@ -40,12 +42,11 @@ dfp['Gross'] = dfp['Gross'].apply(lambda x: float(np.round(int(x*100)))/100)
 dfp['Fee'] = dfp['Fee'].apply(lambda x: float(np.round(int(x*100)))/100)
 dfp['Date'] = pd.to_datetime(dfp['Date'], format='%m/%d/%Y')
 dfp['Month'] = dfp['Date'].apply(lambda dt: int(dt.strftime('%Y%m')))
-dfp['Year'] = dfp['Date'].apply(lambda dt: int(dt.strftime('%Y')))
-dfp['For Month'] = dfp['Month']
 dfp['Amount'] = dfp['Gross']
 dfp['Entries'] = 1
 dfp['Account'] = 'Paypal'
 dfp['how'] = 'EFT'
+dfp['who'] = dfp['Name']
 
 dfp1 = dfp.copy()
 
@@ -55,21 +56,25 @@ def assign_cats_pp(s):
 	how (ATM, Check, EFT)
 	who (Paypal, Square, member, vendor, etc.)
 	what1 (revenue, expense, other) 
-	what2 (dues, donations, dividends, workshops, 501c3 Fund, other revenue,
+	what2 (dues, donations, dividends, workshops, other revenue,
+		501c3 Fund, transfers, 
 		rent and utilities, taxes insurance and fees, 
-		special expense, other expense, 
-		transfers)
+		special expense, other expense)
 	what3 (dues type: monthly, recurring, refund, other; 
 		expense type: rent, utilities, internet, trash, 
-		taxes, licenses, fees monthly, fees other,
+		taxes, licenses, fees monthly, fees other, 
+		fees paypal monthly, fees paypal transactions,
 		(special expense detail),  
-		consumables, equipment, promotional, other expense)'''
+		consumables, equipment, promotional, other expense;
+		transfers)'''
 	
 	what1 = 'UNKNOWN'
 	what2 = 'UNKNOWN'
 	what3 = 'na'
 	
-	if s['Type'] == 'Web Accept Payment Received':
+	if (s['Month'] == 201501) & (s['Name'] == 'Ryan Bennett'):
+		what3 = 'Dues Monthly'
+	elif s['Type'] == 'Web Accept Payment Received':
 		if 'per person' in s['Item Title']:
 			what3 = 'Workshops'
 		elif 'Monthly Dues' in s['Item Title']:
@@ -135,13 +140,11 @@ def assign_cats_pp(s):
 dfp_cats = dfp.apply(assign_cats_pp, axis=1)
 dfp = dfp.join(dfp_cats)
 
-# dfp.shape # (1418, 53)
 
 dfp2 = dfp.copy()
 
-dfp_gross = dfp.copy()
-
 # gross collected and fees are in different columns, separate them
+dfp_gross = dfp.copy()
 dfp_fees = dfp.copy()
 dfp_fees['Amount'] = dfp_fees['Fee']
 dfp_fees['Gross'] = 0
@@ -160,10 +163,7 @@ dfp = dfp_gross.append(dfp_fees, ignore_index=True)
 
 dfp3 = dfp.copy()
 
-#x = dfp[(dfp['Name'] == 'Robert Bryan') & (dfp['Month'] == 201404)]
-#x[['Name','Month','Gross','Type','Dues_Rate','Mbrs','Dues_Disc','what2']]
-
-def assign_members(s):
+def assign_members_pp(s):
 	''' Derive members, dues rate, workshop discount,
 	workshop attendees. Prerequisite: what2 is assigned '''
 	mbrs = 0.0
@@ -176,7 +176,9 @@ def assign_members(s):
 	attendees = 0
 	
 	if 'Dues' in s['what2']:
-		if '3 Months' in s['Option 1 Value']:
+		if (s['Month'] == 201501) & (s['Name'] == 'Ryan Bennett'):
+			mbrs = 4.0
+		elif '3 Months' in s['Option 1 Value']:
 			mbrs = 3.0
 		elif ('2 Months' in s['Option 1 Value']) | (s['Gross'] == 130):
 			mbrs = 2.0
@@ -187,7 +189,7 @@ def assign_members(s):
 		else: 
 			mbrs = 1.0
 	
-		# workshop discount: handled by either charging half or by refund
+		# dues discount for workshop: either charged half or refunded
 		if (s['Gross'] == 12.5) | \
 			(s['Gross'] == 32.5) | \
 			((s['Gross'] == 50.0) & (mbrs == 1)):
@@ -221,6 +223,13 @@ def assign_members(s):
 			duesrate = 65.0
 		elif (s['Name'] == 'Elizabeth Baumann') & (s['Month'] == 201303):
 			duesrate = 65.0
+		elif (s['who'] == 'Daniel Zukowski') & ():
+			duesrate = 65
+		elif (s['who'] == 'Jeffrey Ammons') & ():
+			duesrate = 65
+		elif (s['who'] != 'Richard Buchman'):
+			# 25 each for his son and him - how to handle?
+			duesrate = s['Gross'] * 1.0 / mbrs
 		elif (duesrate == 40.0):
 			duesrate = 25.0 # a few people have paid 40, count as SS
 		elif (duesrate >= 75.0) & (duesrate < 77):
@@ -258,25 +267,30 @@ def assign_members(s):
 		'Dues_Disc' : duesdisc})
 
 
-dfp_mbrs = dfp.apply(assign_members, axis=1)
+dfp_mbrs = dfp.apply(assign_members_pp, axis=1)
 dfp = dfp.join(dfp_mbrs)
 
 dfp4 = dfp.copy()
 
 ################################################################
-# Split payments for 2 or 3 months into pieces
+# Split payments for 2 or 3 months into pieces (creating new rows)
+# Also deal with family memberships
 ################################################################
-# increment For Month also for this part
-
+dfp['For Month'] = dfp['Month']
 dfp_m1 = dfp[dfp['Mbrs'] <= 1.0]
 dfp_m2 = dfp[dfp['Mbrs'] == 2.0]
 dfp_m3 = dfp[dfp['Mbrs'] == 3.0]
+dfp_m4 = dfp[dfp['Mbrs'] == 4.0] # 1/27/15 Ryan Bennett
 
 dfp_m2a = dfp_m2.copy()
 dfp_m2b = dfp_m2.copy()
 dfp_m3a = dfp_m3.copy()
 dfp_m3b = dfp_m3.copy()
 dfp_m3c = dfp_m3.copy()
+dfp_m4a = dfp_m4.copy()
+dfp_m4b = dfp_m4.copy()
+dfp_m4c = dfp_m4.copy()
+dfp_m4d = dfp_m4.copy()
 
 numerics = ['Gross', 'Fee', 'Net', 'Amount', 'Mbrs', \
 	'Mbrs_Reg', 'Mbrs_SS', 'Mbrs_Fam', 'Mbrs_UNK']
@@ -287,24 +301,25 @@ for field in numerics:
 	dfp_m3a[field] = dfp_m3[field] / 3
 	dfp_m3b[field] = dfp_m3[field] / 3
 	dfp_m3c[field] = dfp_m3[field] / 3
+	dfp_m4a[field] = dfp_m4[field] / 4
+	dfp_m4b[field] = dfp_m4[field] / 4
+	dfp_m4c[field] = dfp_m4[field] / 4
+	dfp_m4d[field] = dfp_m4[field] / 4
 
-# increment date and month for 2nd of 2 month and 2nd, 3rd of 3 month
+# increment For Month for 2nd of 2 month and 2nd, 3rd of 3 month
 def increment_month(s):
 	nextdate = s + pd.DateOffset(months=1)
-	return nextdate
+	nextmonth = int(nextdate.strftime('%Y%m'))
+	return nextmonth
 
-dfp_m2b['Date'] = dfp_m2a['Date'].map(increment_month)
-dfp_m3b['Date'] = dfp_m3a['Date'].map(increment_month)
-dfp_m3c['Date'] = dfp_m3b['Date'].map(increment_month)
+dfp_m2b['For Month'] = dfp_m2a['For Month'].map(increment_month)
+dfp_m3b['For Month'] = dfp_m3a['For Month'].map(increment_month)
+dfp_m3c['For Month'] = dfp_m3b['For Month'].map(increment_month)
 
-dfp_m2b['Month'] = dfp_m2b['Date'].apply(lambda dt: int(dt.strftime('%Y%m')))
-dfp_m2b['For Month'] = dfp_m2b['Month']
-
-dfp_m3b['Month'] = dfp_m3b['Date'].apply(lambda dt: int(dt.strftime('%Y%m')))
-dfp_m3b['For Month'] = dfp_m3b['Month']
-
-dfp_m3c['Month'] = dfp_m3c['Date'].apply(lambda dt: int(dt.strftime('%Y%m')))
-dfp_m3c['For Month'] = dfp_m3c['Month']
+dfp_m4a['For Month'] = 201408
+dfp_m4b['For Month'] = dfp_m4a['For Month'].map(increment_month)
+dfp_m4c['For Month'] = dfp_m4b['For Month'].map(increment_month)
+dfp_m4d['For Month'] = dfp_m4c['For Month'].map(increment_month)
 
 dfp = pd.DataFrame()
 dfp = dfp.append(dfp_m1, ignore_index=True)
@@ -313,6 +328,26 @@ dfp = dfp.append(dfp_m2b, ignore_index=True)
 dfp = dfp.append(dfp_m3a, ignore_index=True)
 dfp = dfp.append(dfp_m3b, ignore_index=True)
 dfp = dfp.append(dfp_m3c, ignore_index=True)
+dfp = dfp.append(dfp_m4a, ignore_index=True)
+dfp = dfp.append(dfp_m4b, ignore_index=True)
+dfp = dfp.append(dfp_m4c, ignore_index=True)
+dfp = dfp.append(dfp_m4d, ignore_index=True)
+
+if (dfp['Name'] == 'Dylan Kishner-Lopez') & \
+	(dfp['Month'] == 201501) & \ 	
+	(dfp['Trans'] == '81E50031HF428491Y'):
+	dfp['For Month'] = 201502
+
+# Family memberships:
+# Seb and Kerry, 65 = 40 + 25
+# Ryan Bennett, John Bennett, Nova Art LLC scienceart.com, Dylan Kishner-Lopez, 100 = 50 + 50 
+# Nicholas d howard and Sara Snider, 100 = 50 + 50 
+# Richard Buchman and Jordan Buchman, billed 50 = 25 + 25, but not 'family'
+Daniel Zukowski                 2013-10-12, refunded workshop
+Jeffrey Ammons                  2013-06-29, refunded workshop
+Nova Art LLC scienceart.com
+Note people paying dues after the 15th or so put in next For Month?
+Ryan B payments always complicated...
 
 dfp5 = dfp.copy()
 
@@ -320,8 +355,8 @@ dfp5 = dfp.copy()
 ################################################################
 # Get primary fields (to be merged with Paypal data) and a csv copy
 ################################################################
-dfp.rename(columns={'Name' : 'who', \
-	'Time' : 'PP_Time', \
+dfp['For Year'] = dfp['For Month'].apply(lambda ym: int(ym/100))
+dfp.rename(columns={'Time' : 'PP_Time', \
 	'Type' : 'PP_Type', \
 	'Status' : 'PP_Status', \
 	'Item Title' : 'PP_Item Title', \
@@ -330,7 +365,7 @@ dfp.rename(columns={'Name' : 'who', \
 	'From Email Address' : 'PP_From Email'
 	}, inplace=True)
 
-dfpkeep = ['Date', 'Year', 'Month', 'For Month', \
+dfpkeep = ['Date', 'Month', 'For Year', 'For Month', \
 	'Account', 'SourceFile', 'Transaction ID', \
 	'how', 'who', 'what1', 'what2', 'what3', \
 	'Amount', 'Balance', 'Entries', \
@@ -340,7 +375,7 @@ dfpkeep = ['Date', 'Year', 'Month', 'For Month', \
 	'PP_Option 1', 'PP_Option 2', 'PP_From Email']
 dfp = dfp[dfpkeep]
 
-dfp.to_csv('dfp.csv')
+dfp.to_csv(pathPaypal + 'dfp.csv')
 
 ################################################################
 # Summaries (note, by Name may not print them all...)
@@ -362,38 +397,46 @@ dfpdues[mbrvars_pp].groupby(dfpdues['Mbrs']).sum()
 dfp[sumvars_pp].groupby(dfp['For Month']).sum()
 dfp[mbrvars_pp].groupby(dfp['For Month']).sum()
 
-###################################
-
-dfp1[sumvars2_pp].sum()
-dfp2[sumvars2_pp].sum()
-dfp3[sumvars2_pp].sum()
-dfp_gross[sumvars2_pp].sum()
-dfp_fees[sumvars2_pp].sum()
-
-dfp2[sumvars2_pp].groupby(dfp2['what2']).sum()
-dfp3[sumvars2_pp].groupby(dfp3['what2']).sum()
-
-
 
 ################################################################
 # Use for troubleshooting
 ################################################################
 # check refunds, all for half off dues?
 x = dfpdues[dfpdues['Mbrs_UNK'] != 0]
-x = dfp[(dfp['Name'] == 'Robert Bryan') & (dfp['Month'] == 201404)]
+x = dfp[(dfp['Name'] == 'Robert Bryan') & (dfp['For Month'] == 201404)]
 x = dfp[(dfp['Name'] == 'Jarad Christianson')]
 
-dfpdues = dfp[dfp['what2'] == 'Dues']
+dfpfam = dfp[dfp['Mbrs_Fam'] > 0]
+dfpfam[sumvars_pp].groupby(dfpfam['who']).sum()
+x = dfpfam[(dfpfam['who'] == 'Nova Art LLC scienceart.com')]
+x[['who','Date','Amount','what2','Dues_Rate','Dues_Disc', 'Mbrs','Mbrs_Reg','Mbrs_SS','Mbrs_UNK']].sort('Date')
+Daniel Zukowski                 2013-10-12, refunded workshop
+Jeffrey Ammons                  2013-06-29, refunded workshop
+Nova Art LLC scienceart.com     2014-01-07
 
+
+>>> dfpfam[sumvars_pp].groupby(dfpfam['who']).sum()
+                             Amount  Entries  Mbrs  Dues_Disc  Attendees
+who                                                                     
+Daniel Zukowski                  50        1     1          1          0
+Dylan Kishner-Lopez             200        2     2          0          0
+Jeffrey Ammons                   50        1     1          1          0
+John Bennett                    200        2     2          0          0
+Nicholas d howard               700        7     7          0          0
+Nova Art LLC scienceart.com     100        1     1          0          0
+Richard Buchman                 600       12    12         12          0
+Ryan Bennett                    700        7     7          0          0
+
+
+
+dfpdues = dfp[dfp['what2'] == 'Dues']
 x = dfpdues[(dfpdues['Mbrs'] == 3.0)]
 
-x = dfpdues[(dfpdues['Name'] == 'Elizabeth Baumann') & (dfpdues['Month'] == 201412)]
-x = dfpdues[(dfpdues['Name'] == 'Wayne Radinsky') & (dfpdues['Month'] >= 201409)]
+x = dfpdues[(dfpdues['who'] == 'Wayne Radinsky') & (dfpdues['Month'] >= 201409)]
 x = dfpdues[dfpdues['Dues_Rate'] == 0]
 
-x[['Name','Date','Gross','Dues_Rate','Mbrs','Type', 'Option 1 Value']].sort('Date')
-x[['Name','Date','Gross','Amount','what2','Dues_Rate','Dues_Disc','Type','Mbrs','Mbrs_Reg','Mbrs_SS','Mbrs_UNK']].sort('Date')
-x[['Name','Date','Gross','Type', 'Option 1 Value']].sort('Date')
+x = dfpdues[(dfpdues['who'] == 'Ryan Bennett') & (dfpdues['Month'] >= 201407)]
+x[['who','Date','Amount','what2','Dues_Rate','Dues_Disc', 'Mbrs','Mbrs_Reg','Mbrs_SS','Mbrs_UNK']].sort('Date')
 
 # choose one of these, then run the summaries on it
 dfp2 = dfp[dfp['Mbrs_UNK'] > 0]
@@ -401,7 +444,7 @@ dfp2 = dfp[dfp['what2'] == 'UNKNOWN']
 dfp2 = dfp[dfp['what2'] == 'Fee Other']
 dfp2 = dfp[dfp['Type'] == 'Cancelled Fee']
 
-dfp2[['Name','Month','Gross','Dues_Rate','Dues_Disc']]
+dfp2[['Name','For Month','Gross','Dues_Rate','Dues_Disc']]
 dfp2[['Type','Gross','Dues_Rate']]
 dfp2[['Option 1 Value','Gross','Dues_Rate']]
 dfp2[['Item Title','Gross','Dues_Rate']]
@@ -422,19 +465,13 @@ dfp2[['Item Title','Gross','Dues_Rate']]
 # dfp_m3b['Date']
 # dfp_m3c['Date']
 
-
 ################################################################
-# CONSIDER FOR CHANGES: 
-# split up family to 2 people?
-# consider / need to properly adjust/account for Seb+Kerry family membership
-# 2012 and earlier not complete...
-# have mbr_type instead of tiers in columns?
-# review mill money done as desired (2012?)
-# collect less or not at all on Paypal because of paying expense credit... how much to care about this past stuff? want good duesrate... but maybe better to add elevations and 'cash' payment file in first, then calc duesrate? for past... for go forward, establish a better process? (always do with refunds, for instance)
-# review Joel and Liz adjustments, do by month
-# review:  workshop discount accounted for as desired?
-
+# How to handle this properly?
+# Paid $15 for workshop, reduced dues instead:
 ################################################################
+Daniel Zukowski                 2013-10-12, refunded workshop
+Jeffrey Ammons                  2013-06-29, refunded workshop
+
 
 
 ################################################################
